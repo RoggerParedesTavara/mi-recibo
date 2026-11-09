@@ -12,16 +12,22 @@ import (
 type TenantService struct {
 	tenantRepo   *postgres.TenantRepository
 	propertyRepo *postgres.PropertyRepository
+	unitRepo     *postgres.UnitRepository
 }
 
-func NewTenantService(tenantRepo *postgres.TenantRepository, propertyRepo *postgres.PropertyRepository) *TenantService {
+func NewTenantService(tenantRepo *postgres.TenantRepository, propertyRepo *postgres.PropertyRepository, unitRepos ...*postgres.UnitRepository) *TenantService {
+	var unitRepo *postgres.UnitRepository
+	if len(unitRepos) > 0 {
+		unitRepo = unitRepos[0]
+	}
 	return &TenantService{
 		tenantRepo:   tenantRepo,
 		propertyRepo: propertyRepo,
+		unitRepo:     unitRepo,
 	}
 }
 
-func (s *TenantService) CreateTenant(ctx context.Context, propertyID uuid.UUID, name, email, phone, room string) (*domain.Tenant, error) {
+func (s *TenantService) CreateTenant(ctx context.Context, propertyID uuid.UUID, name, email, phone, room string, unitIDs ...*uuid.UUID) (*domain.Tenant, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, domain.ErrValidation
@@ -31,9 +37,26 @@ func (s *TenantService) CreateTenant(ctx context.Context, propertyID uuid.UUID, 
 	if _, err := s.propertyRepo.GetByID(ctx, propertyID); err != nil {
 		return nil, err
 	}
+	var unitID *uuid.UUID
+	if len(unitIDs) > 0 {
+		unitID = unitIDs[0]
+	}
+	if unitID != nil {
+		if s.unitRepo == nil {
+			return nil, domain.ErrValidation
+		}
+		unit, err := s.unitRepo.GetByID(ctx, *unitID)
+		if err != nil {
+			return nil, err
+		}
+		if unit.PropertyID != propertyID {
+			return nil, domain.ErrValidation
+		}
+	}
 
 	tenant := &domain.Tenant{
 		PropertyID: propertyID,
+		UnitID:     unitID,
 		Name:       name,
 		Email:      strings.TrimSpace(email),
 		Phone:      strings.TrimSpace(phone),
@@ -58,6 +81,18 @@ func (s *TenantService) ListTenantsByProperty(ctx context.Context, propertyID uu
 func (s *TenantService) UpdateTenant(ctx context.Context, tenant *domain.Tenant) (*domain.Tenant, error) {
 	if strings.TrimSpace(tenant.Name) == "" {
 		return nil, domain.ErrValidation
+	}
+	if tenant.UnitID != nil {
+		if s.unitRepo == nil {
+			return nil, domain.ErrValidation
+		}
+		unit, err := s.unitRepo.GetByID(ctx, *tenant.UnitID)
+		if err != nil {
+			return nil, err
+		}
+		if unit.PropertyID != tenant.PropertyID {
+			return nil, domain.ErrValidation
+		}
 	}
 	if err := s.tenantRepo.Update(ctx, tenant); err != nil {
 		return nil, err

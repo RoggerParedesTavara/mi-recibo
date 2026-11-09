@@ -10,25 +10,37 @@ Backend para la gestión y prorrateo automatizado de recibos de servicios básic
    - Un dueño puede administrar múltiples casas o departamentos.
    - Cada casa alberga a múltiples inquilinos (activos/inactivos).
 
-2. **Lista Dinámica de Cargos Extras e Impuestos**:
+2. **Unidades/Pisos y un inquilino principal por unidad**:
+   - Cada propiedad puede tener unidades; cada unidad admite un único inquilino principal activo.
+   - Se conserva `room_or_unit` para compatibilidad con registros anteriores.
+
+3. **Lista Dinámica de Cargos Extras e Impuestos**:
    - Cada recibo principal admite una lista arbitraria de cargos adicionales (ej. *Mantenimiento de red*, *Alumbrado público*, *Cargo fijo*, etc.).
    - Cada ítem contiene su propia descripción y monto.
-   - Estos cargos se dividen en partes iguales entre la cantidad $N$ de inquilinos activos de la propiedad (sin incluir al dueño).
-   - Ejemplo: Cargo de mantenimiento de \$300 entre 3 inquilinos = \$100 a cada uno.
+   - Por defecto cada cargo se divide en partes iguales entre los inquilinos principales activos.
+   - El propietario puede editar la asignación por inquilino, reducirla o dejarla en cero. La liquidación conserva el monto real original y el monto asignado.
+   - Los centavos sobrantes del reparto se asignan de forma estable por nombre e ID; la suma asignada nunca supera el original.
 
-3. **Consumo Propio Estricto (Sin redistribución)**:
+4. **Consumo Propio Estricto (Sin redistribución)**:
    - Cada inquilino paga **únicamente y de forma estricta su consumo medido**:
      $$\text{Costo Consumo} = \text{unidades consumidas} \times \text{precio unitario}$$
    - Las diferencias entre el recibo principal y las lecturas individuales (áreas comunes o pérdidas) no se distribuyen a los inquilinos.
 
-4. **Detección y Alertas de Sobreconsumo**:
+   - Decisión vigente del MVP: costo de consumo = lectura mensual del inquilino × precio unitario del servicio.
+   - La suma de lecturas individuales es una métrica y no tiene que coincidir con el consumo informado por el proveedor.
+
+5. **Recibo del proveedor separado de los subrecibos**:
+   - `provider_total_amount` es opcional y registra el monto real del proveedor. No participa en el cálculo de los recibos individuales.
+   - `total_charged_amount` registra por separado la suma de los subrecibos generados; ambos importes pueden diferir.
+
+6. **Detección y Alertas de Sobreconsumo**:
    - Compara las unidades consumidas del mes contra el mes anterior del mismo servicio.
    - Si el incremento supera el umbral configurado (por defecto 20%), marca el recibo con `alert_spike = true` y detalla la variación porcentual.
 
-5. **Desglose Transparente (Breakdown)**:
-   - Cada inquilino puede consultar su recibo con el desglose exacto de cada cargo extra: concepto original, costo total facturado en la propiedad, cantidad de inquilinos ($N$), y la cuota individual que le corresponde.
+7. **Desglose Transparente (Breakdown)**:
+   - Cada inquilino puede consultar su recibo con el desglose exacto de cada cargo extra: concepto, monto original, cantidad de inquilinos ($N$), cuota por defecto y monto finalmente asignado.
 
-6. **Servidor MCP (Model Context Protocol)**:
+8. **Servidor MCP (Model Context Protocol)**:
    - Incluye binario en `cmd/mcp` para que asistentes de IA (Claude Desktop, Antigravity, Cursor) puedan consultar consumos, reportes y registrar lecturas por lenguaje natural.
 
 ---
@@ -93,7 +105,9 @@ mi-recibo/
 │   └── mi-recibo.postman_collection.json # Colección de Postman / Bruno
 ├── migrations/                      # Migraciones SQL versionadas
 │   ├── 000001_init_schema.up.sql
-│   └── 000001_init_schema.down.sql
+│   ├── 000001_init_schema.down.sql
+│   ├── 000002_mvp_units_allocations.up.sql
+│   └── 000002_mvp_units_allocations.down.sql
 ├── docker-compose.yml               # Entorno PostgreSQL 16
 ├── Dockerfile                       # Multi-stage build optimizado
 ├── go.mod
@@ -183,7 +197,14 @@ curl -X POST http://localhost:8080/api/v1/owners/{owner_id}/properties \
   }'
 ```
 
-### 3. Registrar Inquilinos
+### 3. Registrar pisos/unidades y su inquilino principal
+```bash
+curl -X POST http://localhost:8080/api/v1/properties/{property_id}/units \
+  -H "Content-Type: application/json" -d '{"name":"Piso 1"}'
+```
+Al crear el inquilino se envía el `unit_id` de esa unidad.
+
+### 4. Registrar Inquilinos
 ```bash
 curl -X POST http://localhost:8080/api/v1/properties/{property_id}/tenants \
   -H "Content-Type: application/json" \
@@ -191,11 +212,12 @@ curl -X POST http://localhost:8080/api/v1/properties/{property_id}/tenants \
     "name": "Juan Pérez",
     "email": "juan@ejemplo.com",
     "phone": "+54911556677",
-    "room_or_unit": "Habitación 1"
+    "room_or_unit": "Piso 1",
+    "unit_id": "{unit_id}"
   }'
 ```
 
-### 4. Cargar Recibo Principal con Lista Dinámica de Cargos Extras
+### 5. Cargar Recibo Principal con Lista Dinámica de Cargos Extras
 ```bash
 curl -X POST http://localhost:8080/api/v1/properties/{property_id}/master-bills \
   -H "Content-Type: application/json" \
@@ -205,24 +227,25 @@ curl -X POST http://localhost:8080/api/v1/properties/{property_id}/master-bills 
     "billing_month": 10,
     "total_consumption": 350.0,
     "unit_price": 0.50,
+    "provider_total_amount": 500.00,
     "extra_charges": [
       {
         "description": "Mantenimiento de la red",
-        "amount": 300.00
+        "original_amount": 300.00
       },
       {
         "description": "Alumbrado público",
-        "amount": 45.00
+        "original_amount": 45.00
       },
       {
         "description": "Cargo fijo mensual",
-        "amount": 12.00
+        "original_amount": 12.00
       }
     ]
   }'
 ```
 
-### 5. Cargar Consumos Mensuales de Inquilinos
+### 6. Cargar Consumos Mensuales de Inquilinos
 ```bash
 curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/consumptions \
   -H "Content-Type: application/json" \
@@ -244,12 +267,13 @@ curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/consumpt
   }'
 ```
 
-### 6. Ejecutar Liquidación y Cálculo Automático
+### 7. Revisar y ejecutar liquidación
+`POST /api/v1/master-bills/{master_bill_id}/preview` devuelve subrecibos sin guardarlos. Se puede enviar `extra_charge_allocations` para modificar cargos individuales. `POST .../calculate` persiste la liquidación. Un borrador puede retomarse con `PUT /api/v1/master-bills/{master_bill_id}`.
 ```bash
 curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/calculate
 ```
 
-### 7. Consultar Recibo Individual del Inquilino con Desglose
+### 8. Consultar Recibo Individual del Inquilino con Desglose
 ```bash
 curl -X GET http://localhost:8080/api/v1/tenant-bills/{tenant_bill_id}
 ```

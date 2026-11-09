@@ -14,3 +14,12 @@ type Property struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// Unit represents a floor or separately billed area in a property.
+type Unit struct {
+	ID         uuid.UUID `json:"id"`
+	PropertyID uuid.UUID `json:"property_id"`
+	Name       string    `json:"name"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}

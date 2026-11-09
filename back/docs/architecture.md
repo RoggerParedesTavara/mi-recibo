@@ -54,6 +54,8 @@ El backend sigue los principios de **Clean Architecture** (Arquitectura Limpia) 
 erDiagram
     OWNERS ||--o{ PROPERTIES : "1:N"
     PROPERTIES ||--o{ TENANTS : "1:N"
+    PROPERTIES ||--o{ UNITS : "1:N"
+    UNITS ||--o| TENANTS : "un inquilino principal activo"
     PROPERTIES ||--o{ MASTER_BILLS : "1:N"
     MASTER_BILLS ||--o{ MASTER_BILL_EXTRA_CHARGES : "1:N (Lista Dinámica)"
     MASTER_BILLS ||--o{ TENANT_CONSUMPTIONS : "1:N"
@@ -83,24 +85,32 @@ erDiagram
   $$\text{Costo Consumo Propio}_i = \text{unidades consumidas}_i \times \text{precio unitario}$$
 - **Aislamiento**: Si la suma de consumos individuales no coincide con el consumo del recibo principal (por ejemplo por luces exteriores o bombeo común), **no se cobra ni se reparte a los inquilinos**. La métrica se almacena para control administrativo del dueño.
 
+El precio unitario se conserva como decisión vigente del MVP. `provider_total_amount` es opcional y representa el monto real del proveedor; no se usa para derivar precio ni para calcular subrecibos. `total_charged_amount` registra la suma de subrecibos y puede diferir del proveedor.
+
 ### 3.2 Lista Dinámica de Cargos Extras
-Un recibo puede incluir $M$ cargos adicionales. Para cada cargo extra $k$ en la lista:
-$$\text{Cuota Inquilino}_k = \frac{\text{amount}_k}{N}$$
-donde $N$ es la cantidad de inquilinos activos asociados a la propiedad.
+Un recibo puede incluir $M$ cargos adicionales. Cada cargo conserva `original_amount`; el propietario puede definir `amount_to_charge` para cada inquilino. Por defecto se divide por igual entre inquilinos principales activos. El reparto trabaja en centavos enteros: los centavos de residuo se asignan en orden por nombre y luego ID de inquilino, y el total nunca supera el original. Asignaciones custom aceptan cero y su suma no puede superar el monto original. Si se personaliza un cargo, deben incluirse todos los inquilinos activos.
 
 El total de cargos extras para el inquilino es:
-$$\text{Total Cargos Inquilino} = \sum_{k=1}^M \text{Cuota Inquilino}_k$$
+$$\text{Total Cargos Inquilino} = \sum_{k=1}^M \text{Monto asignado}_{i,k}$$
 
 El total final facturado al inquilino es:
 $$\text{Total Inquilino}_i = \text{Costo Consumo Propio}_i + \text{Total Cargos Inquilino}$$
 
 ### 3.3 Garantía Transaccional (`pgx.Tx`)
 La liquidación completa se realiza dentro de una única transacción ACID:
-1. Se limpia cualquier cálculo previo si se estuviera reliquidando.
+1. Se bloquea el recibo principal y se verifica que siga en estado `DRAFT` y sin liquidación previa.
 2. Se insertan en lote los `tenant_bills`.
 3. Se insertan en lote los desgloses en `tenant_bill_charge_breakdowns`.
 4. Se actualiza el estado del recibo principal a `CALCULATED`.
 5. Se hace `Commit`. Si algún paso falla, se ejecuta `Rollback` y la base de datos queda inalterada.
+
+La liquidación no borra ni reemplaza subrecibos existentes. Los estados de pago y las asignaciones confirmadas quedan protegidos; para corregir datos se debe definir un flujo explícito de reversión en una evolución futura.
+
+### 3.4 Borradores, preview y reintentos
+- `POST /properties/{property_id}/master-bills` crea un borrador único por propiedad/servicio/período.
+- `GET /properties/{property_id}/master-bills` permite recuperar borradores existentes; `PUT /master-bills/{id}` reemplaza sus datos y cargos mientras siga en `DRAFT`.
+- `POST /master-bills/{id}/preview` calcula sin persistir subrecibos. `POST /calculate` persiste el cálculo.
+- Así se puede reanudar un flujo abandonado sin dejar un período bloqueado ni duplicar una liquidación.
 
 ---
 

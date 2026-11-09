@@ -25,6 +25,7 @@ type TenantConsumption struct {
 
 type ReadingInput struct {
 	TenantID        uuid.UUID        `json:"tenant_id"`
+	UnitID          *uuid.UUID       `json:"unit_id,omitempty"`
 	ConsumedUnits   decimal.Decimal  `json:"consumed_units"`
 	PreviousReading *decimal.Decimal `json:"previous_reading,omitempty"`
 	CurrentReading  *decimal.Decimal `json:"current_reading,omitempty"`

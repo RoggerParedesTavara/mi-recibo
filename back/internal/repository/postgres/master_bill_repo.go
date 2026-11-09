@@ -50,16 +50,16 @@ func (r *MasterBillRepository) Create(ctx context.Context, bill *domain.MasterBi
 		INSERT INTO master_bills (
 			id, property_id, service_type, billing_year, billing_month,
 			total_consumption, unit_price, consumption_amount, extra_charges_total,
-			total_amount, issue_date, due_date, status, created_at, updated_at
+			total_amount, provider_total_amount, total_charged_amount, issue_date, due_date, status, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 		)
 		RETURNING created_at, updated_at
 	`
 	err = tx.QueryRow(ctx, insertBillQuery,
 		bill.ID, bill.PropertyID, bill.ServiceType, bill.BillingYear, bill.BillingMonth,
 		bill.TotalConsumption, bill.UnitPrice, bill.ConsumptionAmount, bill.ExtraChargesTotal,
-		bill.TotalAmount, bill.IssueDate, bill.DueDate, bill.Status,
+		bill.TotalAmount, bill.ProviderTotalAmount, bill.IssueDate, bill.DueDate, bill.Status,
 	).Scan(&bill.CreatedAt, &bill.UpdatedAt)
 
 	if err != nil {
@@ -83,6 +83,7 @@ func (r *MasterBillRepository) Create(ctx context.Context, bill *domain.MasterBi
 		}
 		charge.MasterBillID = bill.ID
 		charge.Amount = charge.Amount.Round(2)
+		charge.OriginalAmount = charge.Amount
 
 		err = tx.QueryRow(ctx, insertExtraQuery, charge.ID, charge.MasterBillID, charge.Description, charge.Amount).
 			Scan(&charge.CreatedAt)
@@ -98,11 +99,53 @@ func (r *MasterBillRepository) Create(ctx context.Context, bill *domain.MasterBi
 	return nil
 }
 
+func (r *MasterBillRepository) UpdateDraft(ctx context.Context, bill *domain.MasterBill) error {
+	bill.ConsumptionAmount = bill.TotalConsumption.Mul(bill.UnitPrice).Round(2)
+	extraTotal := decimal.Zero
+	for _, charge := range bill.ExtraCharges {
+		extraTotal = extraTotal.Add(charge.Amount)
+	}
+	bill.ExtraChargesTotal = extraTotal.Round(2)
+	bill.TotalAmount = bill.ConsumptionAmount.Add(bill.ExtraChargesTotal).Round(2)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("error al iniciar transacción: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	result, err := tx.Exec(ctx, `UPDATE master_bills SET service_type=$2, billing_year=$3, billing_month=$4, total_consumption=$5, unit_price=$6, consumption_amount=$7, extra_charges_total=$8, total_amount=$9, provider_total_amount=$10, issue_date=$11, due_date=$12, updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND status='DRAFT'`, bill.ID, bill.ServiceType, bill.BillingYear, bill.BillingMonth, bill.TotalConsumption, bill.UnitPrice, bill.ConsumptionAmount, bill.ExtraChargesTotal, bill.TotalAmount, bill.ProviderTotalAmount, bill.IssueDate, bill.DueDate)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrConflict
+		}
+		return fmt.Errorf("error al actualizar borrador: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrConflict
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM master_bill_extra_charges WHERE master_bill_id=$1`, bill.ID); err != nil {
+		return fmt.Errorf("error al reemplazar cargos del borrador: %w", err)
+	}
+	for i := range bill.ExtraCharges {
+		charge := &bill.ExtraCharges[i]
+		if charge.ID == uuid.Nil {
+			charge.ID = uuid.New()
+		}
+		charge.MasterBillID = bill.ID
+		charge.Amount = charge.Amount.Round(2)
+		charge.OriginalAmount = charge.Amount
+		if err := tx.QueryRow(ctx, `INSERT INTO master_bill_extra_charges (id,master_bill_id,description,amount) VALUES ($1,$2,$3,$4) RETURNING created_at`, charge.ID, bill.ID, charge.Description, charge.Amount).Scan(&charge.CreatedAt); err != nil {
+			return fmt.Errorf("error al guardar cargo: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func (r *MasterBillRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.MasterBill, error) {
 	billQuery := `
 		SELECT id, property_id, service_type, billing_year, billing_month,
 		       total_consumption, unit_price, consumption_amount, extra_charges_total,
-		       total_amount, issue_date, due_date, status, created_at, updated_at
+		       total_amount, provider_total_amount, total_charged_amount, issue_date, due_date, status, created_at, updated_at
 		FROM master_bills
 		WHERE id = $1
 	`
@@ -110,7 +153,7 @@ func (r *MasterBillRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 	err := r.pool.QueryRow(ctx, billQuery, id).Scan(
 		&bill.ID, &bill.PropertyID, &bill.ServiceType, &bill.BillingYear, &bill.BillingMonth,
 		&bill.TotalConsumption, &bill.UnitPrice, &bill.ConsumptionAmount, &bill.ExtraChargesTotal,
-		&bill.TotalAmount, &bill.IssueDate, &bill.DueDate, &bill.Status, &bill.CreatedAt, &bill.UpdatedAt,
+		&bill.TotalAmount, &bill.ProviderTotalAmount, &bill.TotalChargedAmount, &bill.IssueDate, &bill.DueDate, &bill.Status, &bill.CreatedAt, &bill.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -138,6 +181,7 @@ func (r *MasterBillRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 		if err := rows.Scan(&c.ID, &c.MasterBillID, &c.Description, &c.Amount, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("error al escanear cargo extra: %w", err)
 		}
+		c.OriginalAmount = c.Amount
 		bill.ExtraCharges = append(bill.ExtraCharges, c)
 	}
 
@@ -148,7 +192,7 @@ func (r *MasterBillRepository) ListByProperty(ctx context.Context, propertyID uu
 	query := `
 		SELECT id, property_id, service_type, billing_year, billing_month,
 		       total_consumption, unit_price, consumption_amount, extra_charges_total,
-		       total_amount, issue_date, due_date, status, created_at, updated_at
+		       total_amount, provider_total_amount, total_charged_amount, issue_date, due_date, status, created_at, updated_at
 		FROM master_bills
 		WHERE property_id = $1
 	`
@@ -184,7 +228,7 @@ func (r *MasterBillRepository) ListByProperty(ctx context.Context, propertyID uu
 		if err := rows.Scan(
 			&b.ID, &b.PropertyID, &b.ServiceType, &b.BillingYear, &b.BillingMonth,
 			&b.TotalConsumption, &b.UnitPrice, &b.ConsumptionAmount, &b.ExtraChargesTotal,
-			&b.TotalAmount, &b.IssueDate, &b.DueDate, &b.Status, &b.CreatedAt, &b.UpdatedAt,
+			&b.TotalAmount, &b.ProviderTotalAmount, &b.TotalChargedAmount, &b.IssueDate, &b.DueDate, &b.Status, &b.CreatedAt, &b.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("error al escanear recibo principal: %w", err)
 		}

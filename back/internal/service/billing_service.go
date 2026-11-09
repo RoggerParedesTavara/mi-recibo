@@ -13,20 +13,26 @@ import (
 )
 
 type CreateMasterBillInput struct {
-	PropertyID       uuid.UUID                 `json:"property_id"`
-	ServiceType      domain.ServiceType        `json:"service_type"`
-	BillingYear      int                       `json:"billing_year"`
-	BillingMonth     int                       `json:"billing_month"`
-	TotalConsumption decimal.Decimal           `json:"total_consumption"`
-	UnitPrice        decimal.Decimal           `json:"unit_price"`
-	IssueDate        *time.Time                `json:"issue_date,omitempty"`
-	DueDate          *time.Time                `json:"due_date,omitempty"`
-	ExtraCharges     []CreateExtraChargeInput  `json:"extra_charges"`
+	PropertyID          uuid.UUID                `json:"property_id"`
+	ServiceType         domain.ServiceType       `json:"service_type"`
+	BillingYear         int                      `json:"billing_year"`
+	BillingMonth        int                      `json:"billing_month"`
+	TotalConsumption    decimal.Decimal          `json:"total_consumption"`
+	UnitPrice           decimal.Decimal          `json:"unit_price"`
+	ProviderTotalAmount *decimal.Decimal         `json:"provider_total_amount,omitempty"`
+	IssueDate           *time.Time               `json:"issue_date,omitempty"`
+	DueDate             *time.Time               `json:"due_date,omitempty"`
+	ExtraCharges        []CreateExtraChargeInput `json:"extra_charges"`
 }
 
 type CreateExtraChargeInput struct {
-	Description string          `json:"description"`
-	Amount      decimal.Decimal `json:"amount"`
+	Description    string          `json:"description"`
+	Amount         decimal.Decimal `json:"amount"`
+	OriginalAmount decimal.Decimal `json:"original_amount,omitempty"`
+}
+
+type CalculateMasterBillInput struct {
+	ExtraChargeAllocations []domain.ExtraChargeAllocation `json:"extra_charge_allocations,omitempty"`
 }
 
 type BillingService struct {
@@ -35,6 +41,7 @@ type BillingService struct {
 	tenantBillRepo        *postgres.TenantBillRepository
 	tenantRepo            *postgres.TenantRepository
 	propertyRepo          *postgres.PropertyRepository
+	unitRepo              *postgres.UnitRepository
 	spikeThresholdPercent float64
 }
 
@@ -45,13 +52,19 @@ func NewBillingService(
 	tenantRepo *postgres.TenantRepository,
 	propertyRepo *postgres.PropertyRepository,
 	spikeThresholdPercent float64,
+	unitRepos ...*postgres.UnitRepository,
 ) *BillingService {
+	var unitRepo *postgres.UnitRepository
+	if len(unitRepos) > 0 {
+		unitRepo = unitRepos[0]
+	}
 	return &BillingService{
 		masterBillRepo:        masterBillRepo,
 		consumptionRepo:       consumptionRepo,
 		tenantBillRepo:        tenantBillRepo,
 		tenantRepo:            tenantRepo,
 		propertyRepo:          propertyRepo,
+		unitRepo:              unitRepo,
 		spikeThresholdPercent: spikeThresholdPercent,
 	}
 }
@@ -75,6 +88,9 @@ func (s *BillingService) CreateMasterBill(ctx context.Context, input CreateMaste
 	if input.TotalConsumption.IsNegative() {
 		return nil, fmt.Errorf("%w: el consumo total no puede ser negativo", domain.ErrValidation)
 	}
+	if input.ProviderTotalAmount != nil && input.ProviderTotalAmount.IsNegative() {
+		return nil, fmt.Errorf("%w: el monto real del proveedor no puede ser negativo", domain.ErrValidation)
+	}
 
 	// Verify property exists
 	if _, err := s.propertyRepo.GetByID(ctx, input.PropertyID); err != nil {
@@ -88,25 +104,31 @@ func (s *BillingService) CreateMasterBill(ctx context.Context, input CreateMaste
 		if desc == "" {
 			return nil, fmt.Errorf("%w: cada cargo extra debe tener una descripción", domain.ErrValidation)
 		}
-		if ec.Amount.IsNegative() {
+		amount := ec.OriginalAmount
+		if amount.IsZero() {
+			amount = ec.Amount
+		}
+		if amount.IsNegative() {
 			return nil, fmt.Errorf("%w: el monto del cargo extra '%s' no puede ser negativo", domain.ErrValidation, desc)
 		}
 		extraCharges = append(extraCharges, domain.MasterBillExtraCharge{
-			Description: desc,
-			Amount:      ec.Amount,
+			Description:    desc,
+			Amount:         amount,
+			OriginalAmount: amount,
 		})
 	}
 
 	bill := &domain.MasterBill{
-		PropertyID:       input.PropertyID,
-		ServiceType:      input.ServiceType,
-		BillingYear:      input.BillingYear,
-		BillingMonth:     input.BillingMonth,
-		TotalConsumption: input.TotalConsumption,
-		UnitPrice:        input.UnitPrice,
-		IssueDate:        input.IssueDate,
-		DueDate:          input.DueDate,
-		ExtraCharges:     extraCharges,
+		PropertyID:          input.PropertyID,
+		ServiceType:         input.ServiceType,
+		BillingYear:         input.BillingYear,
+		BillingMonth:        input.BillingMonth,
+		TotalConsumption:    input.TotalConsumption,
+		UnitPrice:           input.UnitPrice,
+		ProviderTotalAmount: input.ProviderTotalAmount,
+		IssueDate:           input.IssueDate,
+		DueDate:             input.DueDate,
+		ExtraCharges:        extraCharges,
 	}
 
 	if err := s.masterBillRepo.Create(ctx, bill); err != nil {
@@ -114,6 +136,56 @@ func (s *BillingService) CreateMasterBill(ctx context.Context, input CreateMaste
 	}
 
 	return bill, nil
+}
+
+// UpdateDraftMasterBill replaces editable bill data and extra-charge definitions while the bill is DRAFT.
+func (s *BillingService) UpdateDraftMasterBill(ctx context.Context, id uuid.UUID, input CreateMasterBillInput) (*domain.MasterBill, error) {
+	current, err := s.masterBillRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if current.Status != domain.BillStatusDraft {
+		return nil, domain.ErrConflict
+	}
+	switch input.ServiceType {
+	case domain.ServiceLuz, domain.ServiceAgua, domain.ServiceGas:
+	default:
+		return nil, fmt.Errorf("%w: tipo de servicio inválido", domain.ErrValidation)
+	}
+	if input.BillingMonth < 1 || input.BillingMonth > 12 || input.BillingYear < 2000 {
+		return nil, fmt.Errorf("%w: año o mes de facturación inválido", domain.ErrValidation)
+	}
+	if input.UnitPrice.IsNegative() || input.UnitPrice.IsZero() {
+		return nil, fmt.Errorf("%w: el precio por unidad debe ser mayor a 0", domain.ErrValidation)
+	}
+	if input.TotalConsumption.IsNegative() || (input.ProviderTotalAmount != nil && input.ProviderTotalAmount.IsNegative()) {
+		return nil, domain.ErrValidation
+	}
+	extraCharges := make([]domain.MasterBillExtraCharge, 0, len(input.ExtraCharges))
+	for _, ec := range input.ExtraCharges {
+		desc := strings.TrimSpace(ec.Description)
+		amount := ec.OriginalAmount
+		if amount.IsZero() {
+			amount = ec.Amount
+		}
+		if desc == "" || amount.IsNegative() {
+			return nil, domain.ErrValidation
+		}
+		extraCharges = append(extraCharges, domain.MasterBillExtraCharge{Description: desc, Amount: amount, OriginalAmount: amount})
+	}
+	current.ServiceType = input.ServiceType
+	current.BillingYear = input.BillingYear
+	current.BillingMonth = input.BillingMonth
+	current.TotalConsumption = input.TotalConsumption
+	current.UnitPrice = input.UnitPrice
+	current.ProviderTotalAmount = input.ProviderTotalAmount
+	current.IssueDate = input.IssueDate
+	current.DueDate = input.DueDate
+	current.ExtraCharges = extraCharges
+	if err := s.masterBillRepo.UpdateDraft(ctx, current); err != nil {
+		return nil, err
+	}
+	return s.masterBillRepo.GetByID(ctx, id)
 }
 
 func (s *BillingService) GetMasterBill(ctx context.Context, id uuid.UUID) (*domain.MasterBill, error) {
@@ -135,9 +207,24 @@ func (s *BillingService) RecordConsumptions(ctx context.Context, masterBillID uu
 	}
 
 	consumptions := make([]domain.TenantConsumption, 0, len(readings))
+	seen := make(map[uuid.UUID]struct{}, len(readings))
 	for _, r := range readings {
+		if _, ok := seen[r.TenantID]; ok {
+			return nil, domain.ErrValidation
+		}
+		seen[r.TenantID] = struct{}{}
 		if r.ConsumedUnits.IsNegative() {
 			return nil, fmt.Errorf("%w: el consumo no puede ser negativo para inquilino %s", domain.ErrValidation, r.TenantID)
+		}
+		tenant, err := s.tenantRepo.GetByID(ctx, r.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		if tenant.PropertyID != masterBill.PropertyID || !tenant.IsActive {
+			return nil, domain.ErrValidation
+		}
+		if r.UnitID != nil && (tenant.UnitID == nil || *r.UnitID != *tenant.UnitID) {
+			return nil, domain.ErrValidation
 		}
 
 		// Look up previous month consumption
@@ -172,16 +259,66 @@ func (s *BillingService) RecordConsumptions(ctx context.Context, masterBillID uu
 	return consumptions, nil
 }
 
-func (s *BillingService) CalculateMasterBill(ctx context.Context, masterBillID uuid.UUID) ([]domain.TenantBillDetail, error) {
+func (s *BillingService) CalculateMasterBill(ctx context.Context, masterBillID uuid.UUID, inputs ...CalculateMasterBillInput) ([]domain.TenantBillDetail, error) {
+	var input CalculateMasterBillInput
+	if len(inputs) > 0 {
+		input = inputs[0]
+	}
 	masterBill, err := s.masterBillRepo.GetByID(ctx, masterBillID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Fetch active tenants in the property
-	activeTenants, err := s.tenantRepo.ListByPropertyID(ctx, masterBill.PropertyID, true)
+	if masterBill.Status != domain.BillStatusDraft {
+		return s.tenantBillRepo.ListByMasterBillID(ctx, masterBillID)
+	}
+	preview, err := s.PreviewMasterBill(ctx, masterBillID, input)
 	if err != nil {
 		return nil, err
+	}
+	bills := make([]domain.TenantBill, 0, len(preview))
+	for _, detail := range preview {
+		bills = append(bills, detail.TenantBill)
+	}
+	if err := s.tenantBillRepo.SaveCalculationResult(ctx, masterBillID, bills); err != nil {
+		return nil, err
+	}
+	return s.tenantBillRepo.ListByMasterBillID(ctx, masterBillID)
+}
+
+func (s *BillingService) PreviewMasterBill(ctx context.Context, masterBillID uuid.UUID, input CalculateMasterBillInput) ([]domain.TenantBillDetail, error) {
+	masterBill, err := s.masterBillRepo.GetByID(ctx, masterBillID)
+	if err != nil {
+		return nil, err
+	}
+	if masterBill.Status != domain.BillStatusDraft {
+		return s.tenantBillRepo.ListByMasterBillID(ctx, masterBillID)
+	}
+
+	// Only the active primary tenant attached to each unit participates in the MVP.
+	propertyTenants, err := s.tenantRepo.ListByPropertyID(ctx, masterBill.PropertyID, true)
+	if err != nil {
+		return nil, err
+	}
+	if s.unitRepo == nil {
+		return nil, fmt.Errorf("%w: el servicio de unidades no está configurado", domain.ErrValidation)
+	}
+	units, err := s.unitRepo.ListByPropertyID(ctx, masterBill.PropertyID)
+	if err != nil {
+		return nil, err
+	}
+	activeByUnit := make(map[uuid.UUID]domain.Tenant, len(units))
+	for _, tenant := range propertyTenants {
+		if tenant.UnitID != nil {
+			activeByUnit[*tenant.UnitID] = tenant
+		}
+	}
+	activeTenants := make([]domain.Tenant, 0, len(units))
+	for _, unit := range units {
+		tenant, ok := activeByUnit[unit.ID]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", domain.ErrUnitWithoutPrimary, unit.Name)
+		}
+		activeTenants = append(activeTenants, tenant)
 	}
 
 	// Fetch recorded consumptions
@@ -191,18 +328,38 @@ func (s *BillingService) CalculateMasterBill(ctx context.Context, masterBillID u
 	}
 
 	// Pure domain calculation
-	calcResult, err := domain.CalculateBills(masterBill, activeTenants, consumptions)
+	calcResult, err := domain.CalculateBillsWithAllocations(masterBill, activeTenants, consumptions, input.ExtraChargeAllocations)
 	if err != nil {
 		return nil, err
 	}
 
-	// Persist calculation result
-	if err := s.tenantBillRepo.SaveCalculationResult(ctx, masterBillID, calcResult.TenantBills); err != nil {
+	property, err := s.propertyRepo.GetByID(ctx, masterBill.PropertyID)
+	if err != nil {
 		return nil, err
 	}
-
-	// Return enriched bill details
-	return s.tenantBillRepo.ListByMasterBillID(ctx, masterBillID)
+	unitNames := map[uuid.UUID]string{}
+	for _, unit := range units {
+		unitNames[unit.ID] = unit.Name
+	}
+	consumptionByTenant := make(map[uuid.UUID]domain.TenantConsumption, len(consumptions))
+	for _, c := range consumptions {
+		consumptionByTenant[c.TenantID] = c
+	}
+	tenantByID := make(map[uuid.UUID]domain.Tenant, len(activeTenants))
+	for _, tenant := range activeTenants {
+		tenantByID[tenant.ID] = tenant
+	}
+	details := make([]domain.TenantBillDetail, 0, len(calcResult.TenantBills))
+	for _, bill := range calcResult.TenantBills {
+		tenant := tenantByID[bill.TenantID]
+		unitName := tenant.RoomOrUnit
+		if tenant.UnitID != nil && unitNames[*tenant.UnitID] != "" {
+			unitName = unitNames[*tenant.UnitID]
+		}
+		c := consumptionByTenant[bill.TenantID]
+		details = append(details, domain.TenantBillDetail{TenantBill: bill, TenantName: tenant.Name, RoomOrUnit: unitName, PropertyName: property.Name, UnitID: tenant.UnitID, UnitName: unitName, ServiceType: masterBill.ServiceType, BillingYear: masterBill.BillingYear, BillingMonth: masterBill.BillingMonth, AlertSpike: c.AlertSpike, AlertMessage: c.AlertMessage, PreviousMonthUnits: c.PreviousMonthConsumption})
+	}
+	return details, nil
 }
 
 func (s *BillingService) GetTenantBill(ctx context.Context, id uuid.UUID) (*domain.TenantBillDetail, error) {

@@ -23,10 +23,11 @@ func NewTenantHandler(tenantService *service.TenantService, billingService *serv
 }
 
 type CreateTenantRequest struct {
-	Name       string `json:"name"`
-	Email      string `json:"email"`
-	Phone      string `json:"phone"`
-	RoomOrUnit string `json:"room_or_unit"`
+	Name       string     `json:"name"`
+	Email      string     `json:"email"`
+	Phone      string     `json:"phone"`
+	RoomOrUnit string     `json:"room_or_unit"`
+	UnitID     *uuid.UUID `json:"unit_id,omitempty"`
 }
 
 func (h *TenantHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +44,7 @@ func (h *TenantHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenant, err := h.tenantService.CreateTenant(r.Context(), propertyID, req.Name, req.Email, req.Phone, req.RoomOrUnit)
+	tenant, err := h.tenantService.CreateTenant(r.Context(), propertyID, req.Name, req.Email, req.Phone, req.RoomOrUnit, req.UnitID)
 	if err != nil {
 		RespondError(w, err)
 		return

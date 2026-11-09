@@ -20,9 +20,10 @@ type TenantBillChargeBreakdown struct {
 	TenantBillID   uuid.UUID       `json:"tenant_bill_id"`
 	ExtraChargeID  *uuid.UUID      `json:"extra_charge_id,omitempty"`
 	Description    string          `json:"description"`
-	OriginalAmount decimal.Decimal `json:"original_amount"` // Total charge amount for the entire property
-	TenantsCount   int             `json:"tenants_count"`   // Divisor N
-	TenantShare    decimal.Decimal `json:"tenant_share"`    // OriginalAmount / N
+	OriginalAmount decimal.Decimal `json:"original_amount"`  // Total charge amount for the entire property
+	TenantsCount   int             `json:"tenants_count"`    // Divisor N
+	TenantShare    decimal.Decimal `json:"tenant_share"`     // OriginalAmount / N
+	AmountToCharge decimal.Decimal `json:"amount_to_charge"` // Owner-selected amount assigned to this tenant
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
@@ -48,6 +49,8 @@ type TenantBillDetail struct {
 	TenantBill
 	TenantName         string           `json:"tenant_name"`
 	RoomOrUnit         string           `json:"room_or_unit,omitempty"`
+	UnitID             *uuid.UUID       `json:"unit_id,omitempty"`
+	UnitName           string           `json:"unit_name,omitempty"`
 	PropertyName       string           `json:"property_name"`
 	ServiceType        ServiceType      `json:"service_type"`
 	BillingYear        int              `json:"billing_year"`

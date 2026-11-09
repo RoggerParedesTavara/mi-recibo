@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,14 +23,15 @@ func NewBillHandler(billingService *service.BillingService) *BillHandler {
 }
 
 type CreateMasterBillRequest struct {
-	ServiceType      domain.ServiceType               `json:"service_type"`
-	BillingYear      int                              `json:"billing_year"`
-	BillingMonth     int                              `json:"billing_month"`
-	TotalConsumption decimal.Decimal                  `json:"total_consumption"`
-	UnitPrice        decimal.Decimal                  `json:"unit_price"`
-	IssueDate        *time.Time                       `json:"issue_date,omitempty"`
-	DueDate          *time.Time                       `json:"due_date,omitempty"`
-	ExtraCharges     []service.CreateExtraChargeInput `json:"extra_charges"`
+	ServiceType         domain.ServiceType               `json:"service_type"`
+	BillingYear         int                              `json:"billing_year"`
+	BillingMonth        int                              `json:"billing_month"`
+	TotalConsumption    decimal.Decimal                  `json:"total_consumption"`
+	UnitPrice           decimal.Decimal                  `json:"unit_price"`
+	ProviderTotalAmount *decimal.Decimal                 `json:"provider_total_amount,omitempty"`
+	IssueDate           *time.Time                       `json:"issue_date,omitempty"`
+	DueDate             *time.Time                       `json:"due_date,omitempty"`
+	ExtraCharges        []service.CreateExtraChargeInput `json:"extra_charges"`
 }
 
 func (h *BillHandler) CreateMasterBill(w http.ResponseWriter, r *http.Request) {
@@ -47,15 +49,16 @@ func (h *BillHandler) CreateMasterBill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bill, err := h.billingService.CreateMasterBill(r.Context(), service.CreateMasterBillInput{
-		PropertyID:       propertyID,
-		ServiceType:      req.ServiceType,
-		BillingYear:      req.BillingYear,
-		BillingMonth:     req.BillingMonth,
-		TotalConsumption: req.TotalConsumption,
-		UnitPrice:        req.UnitPrice,
-		IssueDate:        req.IssueDate,
-		DueDate:          req.DueDate,
-		ExtraCharges:     req.ExtraCharges,
+		PropertyID:          propertyID,
+		ServiceType:         req.ServiceType,
+		BillingYear:         req.BillingYear,
+		BillingMonth:        req.BillingMonth,
+		TotalConsumption:    req.TotalConsumption,
+		UnitPrice:           req.UnitPrice,
+		ProviderTotalAmount: req.ProviderTotalAmount,
+		IssueDate:           req.IssueDate,
+		DueDate:             req.DueDate,
+		ExtraCharges:        req.ExtraCharges,
 	})
 	if err != nil {
 		RespondError(w, err)
@@ -63,6 +66,25 @@ func (h *BillHandler) CreateMasterBill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, http.StatusCreated, bill)
+}
+
+func (h *BillHandler) UpdateMasterBill(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	var req CreateMasterBillRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	bill, err := h.billingService.UpdateDraftMasterBill(r.Context(), id, service.CreateMasterBillInput{ServiceType: req.ServiceType, BillingYear: req.BillingYear, BillingMonth: req.BillingMonth, TotalConsumption: req.TotalConsumption, UnitPrice: req.UnitPrice, ProviderTotalAmount: req.ProviderTotalAmount, IssueDate: req.IssueDate, DueDate: req.DueDate, ExtraCharges: req.ExtraCharges})
+	if err != nil {
+		RespondError(w, err)
+		return
+	}
+	RespondJSON(w, http.StatusOK, bill)
 }
 
 func (h *BillHandler) GetMasterBill(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +129,50 @@ type RecordConsumptionsRequest struct {
 	Readings []domain.ReadingInput `json:"readings"`
 }
 
+type CalculateMasterBillRequest struct {
+	ExtraChargeAllocations []domain.ExtraChargeAllocation `json:"extra_charge_allocations,omitempty"`
+}
+
+type CalculateMasterBillResponse struct {
+	ProviderTotalAmount *decimal.Decimal          `json:"provider_total_amount,omitempty"`
+	TotalChargedAmount  decimal.Decimal           `json:"total_charged_amount"`
+	TenantBills         []domain.TenantBillDetail `json:"tenant_bills"`
+}
+
+func makeCalculateResponse(providerTotal *decimal.Decimal, bills []domain.TenantBillDetail) CalculateMasterBillResponse {
+	total := decimal.Zero
+	for _, bill := range bills {
+		total = total.Add(bill.TotalAmount)
+	}
+	return CalculateMasterBillResponse{ProviderTotalAmount: providerTotal, TotalChargedAmount: total, TenantBills: bills}
+}
+
+func (h *BillHandler) PreviewMasterBill(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	var req CalculateMasterBillRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			RespondError(w, domain.ErrValidation)
+			return
+		}
+	}
+	bills, err := h.billingService.PreviewMasterBill(r.Context(), id, service.CalculateMasterBillInput{ExtraChargeAllocations: req.ExtraChargeAllocations})
+	if err != nil {
+		RespondError(w, err)
+		return
+	}
+	master, err := h.billingService.GetMasterBill(r.Context(), id)
+	if err != nil {
+		RespondError(w, err)
+		return
+	}
+	RespondJSON(w, http.StatusOK, makeCalculateResponse(master.ProviderTotalAmount, bills))
+}
+
 func (h *BillHandler) RecordConsumptions(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	masterBillID, err := uuid.Parse(idStr)
@@ -141,15 +207,29 @@ func (h *BillHandler) CalculateMasterBill(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	bills, err := h.billingService.CalculateMasterBill(r.Context(), masterBillID)
+	var req CalculateMasterBillRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			RespondError(w, domain.ErrValidation)
+			return
+		}
+	}
+	bills, err := h.billingService.CalculateMasterBill(r.Context(), masterBillID, service.CalculateMasterBillInput{ExtraChargeAllocations: req.ExtraChargeAllocations})
 	if err != nil {
 		RespondError(w, err)
 		return
 	}
 
+	master, err := h.billingService.GetMasterBill(r.Context(), masterBillID)
+	if err != nil {
+		RespondError(w, err)
+		return
+	}
 	RespondJSON(w, http.StatusOK, map[string]any{
-		"message":      "Recibos calculados y generados exitosamente",
-		"tenant_bills": bills,
+		"message":               "Recibos calculados y generados exitosamente",
+		"provider_total_amount": master.ProviderTotalAmount,
+		"total_charged_amount":  makeCalculateResponse(nil, bills).TotalChargedAmount,
+		"tenant_bills":          bills,
 	})
 }
 
