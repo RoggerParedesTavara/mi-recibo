@@ -12,6 +12,7 @@ type RouterParams struct {
 	PropertyHandler *PropertyHandler
 	TenantHandler   *TenantHandler
 	BillHandler     *BillHandler
+	UnitHandler     *UnitHandler
 }
 
 func NewRouter(p RouterParams) http.Handler {
@@ -47,6 +48,8 @@ func NewRouter(p RouterParams) http.Handler {
 			r.Get("/{id}", p.PropertyHandler.GetProperty)
 			r.Post("/{property_id}/tenants", p.TenantHandler.CreateTenant)
 			r.Get("/{property_id}/tenants", p.TenantHandler.ListTenantsByProperty)
+			r.Post("/{property_id}/units", p.UnitHandler.Create)
+			r.Get("/{property_id}/units", p.UnitHandler.List)
 			r.Post("/{property_id}/master-bills", p.BillHandler.CreateMasterBill)
 			r.Get("/{property_id}/master-bills", p.BillHandler.ListMasterBills)
 		})
@@ -56,11 +59,14 @@ func NewRouter(p RouterParams) http.Handler {
 			r.Put("/{id}", p.TenantHandler.UpdateTenant)
 			r.Get("/{id}/bills", p.TenantHandler.ListTenantBills)
 		})
+		r.Put("/units/{id}", p.UnitHandler.Update)
 
 		// Master Bills
 		r.Route("/master-bills", func(r chi.Router) {
 			r.Get("/{id}", p.BillHandler.GetMasterBill)
+			r.Put("/{id}", p.BillHandler.UpdateMasterBill)
 			r.Post("/{id}/consumptions", p.BillHandler.RecordConsumptions)
+			r.Post("/{id}/preview", p.BillHandler.PreviewMasterBill)
 			r.Post("/{id}/calculate", p.BillHandler.CalculateMasterBill)
 			r.Get("/{id}/tenant-bills", p.BillHandler.ListMasterBillTenantBills)
 		})

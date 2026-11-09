@@ -115,6 +115,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Property'
+
+  /properties/{property_id}/units:
+    post:
+      summary: Crear un piso o unidad de una propiedad
+      tags: [Unidades]
+      parameters:
+        - name: property_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, example: "Piso 1"}
+      responses:
+        '201':
+          description: Unidad creada
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unit'}
+    get:
+      summary: Listar unidades de una propiedad
+      tags: [Unidades]
+      parameters:
+        - name: property_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Unidades de la propiedad
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Unit'}
+
+  /units/{id}:
+    put:
+      summary: Renombrar unidad
+      tags: [Unidades]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, example: "Piso 1"}
+      responses:
+        '200':
+          description: Unidad actualizada
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Unit'}
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -284,6 +350,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MasterBill'
+    put:
+      summary: Actualizar datos de un recibo principal en borrador
+      description: Solo se puede modificar mientras status sea DRAFT. Reemplaza el conjunto de cargos extra.
+      tags: [Recibos Principales]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateMasterBillRequest'}
+      responses:
+        '200':
+          description: Borrador actualizado
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MasterBill'}
 
   /master-bills/{id}/consumptions:
     post:
@@ -320,13 +406,34 @@ paths:
                     items:
                       $ref: '#/components/schemas/TenantConsumption'
 
+  /master-bills/{id}/preview:
+    post:
+      summary: Previsualizar subrecibos sin confirmar la liquidación
+      tags: [Liquidación]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CalculateMasterBillRequest'}
+      responses:
+        '200':
+          description: Vista previa calculada
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CalculateMasterBillResponse'}
+
   /master-bills/{id}/calculate:
     post:
       summary: Ejecutar cálculo y liquidación mensual del recibo principal
       description: >
-        Divide cada cargo extra de la lista equitativamente entre N inquilinos activos,
-        multiplica el consumo individual por el precio unitario y genera los recibos
-        individuales con desglose detallado en una transacción atómica.
+        Por defecto divide cada cargo extra entre los inquilinos principales activos. Si se envían
+        importes personalizados, persiste los asignados. El total real del proveedor no afecta los
+        subrecibos. El consumo individual se multiplica por el precio unitario.
       tags: [Liquidación]
       parameters:
         - name: id
@@ -335,20 +442,17 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CalculateMasterBillRequest'}
       responses:
         '200':
           description: Recibos individuales generados
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                  tenant_bills:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/TenantBillDetail'
+              schema: {$ref: '#/components/schemas/CalculateMasterBillResponse'}
 
   /master-bills/{id}/tenant-bills:
     get:
@@ -499,6 +603,9 @@ components:
         property_id:
           type: string
           format: uuid
+        unit_id:
+          type: string
+          format: uuid
         name:
           type: string
           example: "Juan Pérez"
@@ -531,17 +638,35 @@ components:
         room_or_unit:
           type: string
           example: "Habitación 1"
+        unit_id:
+          type: string
+          format: uuid
+          description: Unidad del inquilino principal. Requerida en el flujo MVP; opcional para clientes heredados.
+
+    Unit:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        property_id: {type: string, format: uuid}
+        name: {type: string, example: "Piso 1"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
 
     ExtraChargeItem:
       type: object
-      required: [description, amount]
+      required: [description, original_amount]
       properties:
         description:
           type: string
           example: "Mantenimiento de la red"
+        original_amount:
+          type: number
+          example: 300.00
+          description: Monto real del cargo en el recibo del proveedor.
         amount:
-          type: string
-          example: "300.00"
+          type: number
+          deprecated: true
+          description: Alias legado de original_amount.
 
     MasterBillExtraCharge:
       type: object
@@ -556,6 +681,9 @@ components:
           type: string
           example: "Mantenimiento de la red"
         amount:
+          type: string
+          example: "300.00"
+        original_amount:
           type: string
           example: "300.00"
         created_at:
@@ -586,6 +714,14 @@ components:
         unit_price:
           type: string
           example: "0.5000"
+        provider_total_amount:
+          type: string
+          nullable: true
+          description: Monto real opcional del proveedor; no se usa para calcular subrecibos.
+          example: "53000.00"
+        total_charged_amount:
+          type: string
+          description: Suma de los subrecibos confirmados.
         consumption_amount:
           type: string
           example: "175.00"
@@ -605,7 +741,7 @@ components:
 
     CreateMasterBillRequest:
       type: object
-      required: [service_type, billing_year, billing_month, total_consumption, unit_price]
+      required: [service_type, billing_year, billing_month, unit_price]
       properties:
         service_type:
           type: string
@@ -620,9 +756,15 @@ components:
         total_consumption:
           type: number
           example: 350.0
+          description: Consumo general opcional que se conserva como métrica; no se usa para ajustar los subrecibos.
         unit_price:
           type: number
           example: 0.50
+          description: Precio usado para calcular consumo individual × precio unitario.
+        provider_total_amount:
+          type: number
+          nullable: true
+          description: Monto real opcional del recibo del proveedor; no afecta los subrecibos.
         issue_date:
           type: string
           format: date
@@ -641,6 +783,9 @@ components:
       required: [tenant_id, consumed_units]
       properties:
         tenant_id:
+          type: string
+          format: uuid
+        unit_id:
           type: string
           format: uuid
         consumed_units:
@@ -706,11 +851,20 @@ components:
         tenant_share:
           type: string
           example: "100.00"
+          deprecated: true
+          description: Alias de compatibilidad de amount_to_charge.
+        amount_to_charge:
+          type: string
+          example: "100.00"
+          description: Monto que el propietario asignó a este inquilino.
 
     TenantBillDetail:
       type: object
       properties:
         id:
+          type: string
+          format: uuid
+        master_bill_id:
           type: string
           format: uuid
         tenant_id:
@@ -722,6 +876,12 @@ components:
         room_or_unit:
           type: string
           example: "Habitación 1"
+        unit_id:
+          type: string
+          format: uuid
+        unit_name:
+          type: string
+          example: "Piso 1"
         property_name:
           type: string
           example: "Casa Los Rosales"
@@ -763,6 +923,31 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TenantBillChargeBreakdown'
+
+    ExtraChargeAllocation:
+      type: object
+      required: [extra_charge_id, tenant_id, amount_to_charge]
+      properties:
+        extra_charge_id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        amount_to_charge: {type: number, minimum: 0, example: 500.00}
+
+    CalculateMasterBillRequest:
+      type: object
+      properties:
+        extra_charge_allocations:
+          type: array
+          description: Si se personaliza un cargo, enviar una asignación para cada inquilino activo; no superar el monto real.
+          items: {$ref: '#/components/schemas/ExtraChargeAllocation'}
+
+    CalculateMasterBillResponse:
+      type: object
+      properties:
+        provider_total_amount: {type: string, nullable: true, description: Monto real del proveedor (referencia).}
+        total_charged_amount: {type: string, description: Suma de los subrecibos.}
+        tenant_bills:
+          type: array
+          items: {$ref: '#/components/schemas/TenantBillDetail'}
 
     ErrorResponse:
       type: object

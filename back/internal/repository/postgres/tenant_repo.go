@@ -8,6 +8,7 @@ import (
 	"github.com/RoggerParedesTavara/mi-recibo/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,8 +22,8 @@ func NewTenantRepository(pool *pgxpool.Pool) *TenantRepository {
 
 func (r *TenantRepository) Create(ctx context.Context, tenant *domain.Tenant) error {
 	query := `
-		INSERT INTO tenants (id, property_id, name, email, phone, room_or_unit, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO tenants (id, property_id, unit_id, name, email, phone, room_or_unit, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id, created_at, updated_at
 	`
 	if tenant.ID == uuid.Nil {
@@ -30,9 +31,13 @@ func (r *TenantRepository) Create(ctx context.Context, tenant *domain.Tenant) er
 	}
 
 	err := r.pool.QueryRow(ctx, query,
-		tenant.ID, tenant.PropertyID, tenant.Name, tenant.Email, tenant.Phone, tenant.RoomOrUnit, tenant.IsActive).
+		tenant.ID, tenant.PropertyID, tenant.UnitID, tenant.Name, tenant.Email, tenant.Phone, tenant.RoomOrUnit, tenant.IsActive).
 		Scan(&tenant.ID, &tenant.CreatedAt, &tenant.UpdatedAt)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrConflict
+		}
 		return fmt.Errorf("error al insertar inquilino: %w", err)
 	}
 
@@ -41,13 +46,13 @@ func (r *TenantRepository) Create(ctx context.Context, tenant *domain.Tenant) er
 
 func (r *TenantRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tenant, error) {
 	query := `
-		SELECT id, property_id, name, email, phone, room_or_unit, is_active, created_at, updated_at
+		SELECT id, property_id, unit_id, name, email, phone, room_or_unit, is_active, created_at, updated_at
 		FROM tenants
 		WHERE id = $1
 	`
 	tenant := &domain.Tenant{}
 	err := r.pool.QueryRow(ctx, query, id).
-		Scan(&tenant.ID, &tenant.PropertyID, &tenant.Name, &tenant.Email, &tenant.Phone,
+		Scan(&tenant.ID, &tenant.PropertyID, &tenant.UnitID, &tenant.Name, &tenant.Email, &tenant.Phone,
 			&tenant.RoomOrUnit, &tenant.IsActive, &tenant.CreatedAt, &tenant.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -61,7 +66,7 @@ func (r *TenantRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.T
 
 func (r *TenantRepository) ListByPropertyID(ctx context.Context, propertyID uuid.UUID, onlyActive bool) ([]domain.Tenant, error) {
 	query := `
-		SELECT id, property_id, name, email, phone, room_or_unit, is_active, created_at, updated_at
+		SELECT id, property_id, unit_id, name, email, phone, room_or_unit, is_active, created_at, updated_at
 		FROM tenants
 		WHERE property_id = $1
 	`
@@ -79,7 +84,7 @@ func (r *TenantRepository) ListByPropertyID(ctx context.Context, propertyID uuid
 	var tenants []domain.Tenant
 	for rows.Next() {
 		var t domain.Tenant
-		if err := rows.Scan(&t.ID, &t.PropertyID, &t.Name, &t.Email, &t.Phone,
+		if err := rows.Scan(&t.ID, &t.PropertyID, &t.UnitID, &t.Name, &t.Email, &t.Phone,
 			&t.RoomOrUnit, &t.IsActive, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("error al escanear inquilino: %w", err)
 		}
@@ -92,16 +97,20 @@ func (r *TenantRepository) ListByPropertyID(ctx context.Context, propertyID uuid
 func (r *TenantRepository) Update(ctx context.Context, tenant *domain.Tenant) error {
 	query := `
 		UPDATE tenants
-		SET name = $2, email = $3, phone = $4, room_or_unit = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP
+		SET name = $2, email = $3, phone = $4, room_or_unit = $5, is_active = $6, unit_id = $7, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
 		RETURNING updated_at
 	`
 	err := r.pool.QueryRow(ctx, query,
-		tenant.ID, tenant.Name, tenant.Email, tenant.Phone, tenant.RoomOrUnit, tenant.IsActive).
+		tenant.ID, tenant.Name, tenant.Email, tenant.Phone, tenant.RoomOrUnit, tenant.IsActive, tenant.UnitID).
 		Scan(&tenant.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrNotFound
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrConflict
 		}
 		return fmt.Errorf("error al actualizar inquilino: %w", err)
 	}

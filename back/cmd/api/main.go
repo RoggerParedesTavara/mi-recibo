@@ -48,6 +48,7 @@ func main() {
 	// 4. Initialize Repositories
 	ownerRepo := postgres.NewOwnerRepository(db.Pool)
 	propertyRepo := postgres.NewPropertyRepository(db.Pool)
+	unitRepo := postgres.NewUnitRepository(db.Pool)
 	tenantRepo := postgres.NewTenantRepository(db.Pool)
 	masterBillRepo := postgres.NewMasterBillRepository(db.Pool)
 	consumptionRepo := postgres.NewConsumptionRepository(db.Pool)
@@ -55,7 +56,8 @@ func main() {
 
 	// 5. Initialize Services
 	propertyService := service.NewPropertyService(ownerRepo, propertyRepo)
-	tenantService := service.NewTenantService(tenantRepo, propertyRepo)
+	tenantService := service.NewTenantService(tenantRepo, propertyRepo, unitRepo)
+	unitService := service.NewUnitService(unitRepo, propertyRepo)
 	billingService := service.NewBillingService(
 		masterBillRepo,
 		consumptionRepo,
@@ -63,6 +65,7 @@ func main() {
 		tenantRepo,
 		propertyRepo,
 		cfg.ConsumptionAlertSpikeThreshold,
+		unitRepo,
 	)
 
 	// 6. Initialize HTTP Handlers & Router
@@ -70,12 +73,14 @@ func main() {
 	propertyHandler := httpHandler.NewPropertyHandler(propertyService)
 	tenantHandler := httpHandler.NewTenantHandler(tenantService, billingService)
 	billHandler := httpHandler.NewBillHandler(billingService)
+	unitHandler := httpHandler.NewUnitHandler(unitService)
 
 	router := httpHandler.NewRouter(httpHandler.RouterParams{
 		OwnerHandler:    ownerHandler,
 		PropertyHandler: propertyHandler,
 		TenantHandler:   tenantHandler,
 		BillHandler:     billHandler,
+		UnitHandler:     unitHandler,
 	})
 
 	server := &http.Server{

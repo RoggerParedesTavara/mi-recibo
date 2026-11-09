@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -10,6 +11,12 @@ import (
 // CalculationResult holds the calculated bills and itemized charge breakdowns for all active tenants
 type CalculationResult struct {
 	TenantBills []TenantBill
+}
+
+type ExtraChargeAllocation struct {
+	ExtraChargeID  uuid.UUID       `json:"extra_charge_id"`
+	TenantID       uuid.UUID       `json:"tenant_id"`
+	AmountToCharge decimal.Decimal `json:"amount_to_charge"`
 }
 
 // CalculateBills executes the pure calculation logic:
@@ -22,15 +29,38 @@ func CalculateBills(
 	activeTenants []Tenant,
 	consumptions []TenantConsumption,
 ) (*CalculationResult, error) {
+	return CalculateBillsWithAllocations(masterBill, activeTenants, consumptions, nil)
+}
+
+// CalculateBillsWithAllocations calculates each tenant's consumption cost and extra-charge allocation.
+// Unspecified charges are split equally; explicitly supplied tenant amounts are preserved exactly.
+func CalculateBillsWithAllocations(
+	masterBill *MasterBill,
+	activeTenants []Tenant,
+	consumptions []TenantConsumption,
+	allocations []ExtraChargeAllocation,
+) (*CalculationResult, error) {
 	n := len(activeTenants)
 	if n == 0 {
 		return nil, ErrNoActiveTenants
 	}
+	// Stable ordering makes leftover cents repeatable, even when names match.
+	activeTenants = append([]Tenant(nil), activeTenants...)
+	sort.Slice(activeTenants, func(i, j int) bool {
+		if activeTenants[i].Name != activeTenants[j].Name {
+			return activeTenants[i].Name < activeTenants[j].Name
+		}
+		return activeTenants[i].ID.String() < activeTenants[j].ID.String()
+	})
 
 	// Map consumptions by tenant ID
 	consumptionMap := make(map[uuid.UUID]TenantConsumption, len(consumptions))
 	for _, c := range consumptions {
 		consumptionMap[c.TenantID] = c
+	}
+	activeTenantIDs := make(map[uuid.UUID]struct{}, len(activeTenants))
+	for _, tenant := range activeTenants {
+		activeTenantIDs[tenant.ID] = struct{}{}
 	}
 
 	// Verify every active tenant has a consumption record
@@ -40,8 +70,53 @@ func CalculateBills(
 		}
 	}
 
-	divisor := decimal.NewFromInt(int64(n))
+	allocationMap := make(map[uuid.UUID]map[uuid.UUID]decimal.Decimal)
+	chargesByID := make(map[uuid.UUID]MasterBillExtraCharge, len(masterBill.ExtraCharges))
+	for _, charge := range masterBill.ExtraCharges {
+		chargesByID[charge.ID] = charge
+	}
+	for _, allocation := range allocations {
+		_, ok := chargesByID[allocation.ExtraChargeID]
+		if !ok || allocation.AmountToCharge.IsNegative() {
+			return nil, ErrValidation
+		}
+		if _, ok := activeTenantIDs[allocation.TenantID]; !ok {
+			return nil, ErrValidation
+		}
+		if allocationMap[allocation.ExtraChargeID] == nil {
+			allocationMap[allocation.ExtraChargeID] = make(map[uuid.UUID]decimal.Decimal)
+		}
+		if _, exists := allocationMap[allocation.ExtraChargeID][allocation.TenantID]; exists {
+			return nil, ErrValidation
+		}
+		allocationMap[allocation.ExtraChargeID][allocation.TenantID] = allocation.AmountToCharge.Round(2)
+	}
+	for chargeID, tenantAllocations := range allocationMap {
+		charge := chargesByID[chargeID]
+		if len(tenantAllocations) != n {
+			return nil, fmt.Errorf("%w: debe indicar un monto para cada inquilino del cargo '%s'", ErrValidation, charge.Description)
+		}
+		allocated := decimal.Zero
+		for _, amount := range tenantAllocations {
+			allocated = allocated.Add(amount)
+		}
+		if allocated.GreaterThan(charge.Amount.Round(2)) {
+			return nil, fmt.Errorf("%w: el total asignado al cargo '%s' supera su monto real", ErrValidation, charge.Description)
+		}
+	}
 	bills := make([]TenantBill, 0, n)
+	defaultShares := make(map[string]decimal.Decimal)
+	for _, extra := range masterBill.ExtraCharges {
+		cents := extra.Amount.Round(2).Mul(decimal.NewFromInt(100)).IntPart()
+		baseCents, remainder := cents/int64(n), cents%int64(n)
+		for index, tenant := range activeTenants {
+			shareCents := baseCents
+			if int64(index) < remainder {
+				shareCents++
+			}
+			defaultShares[extra.ID.String()+tenant.ID.String()] = decimal.NewFromInt(shareCents).Div(decimal.NewFromInt(100))
+		}
+	}
 
 	for _, tenant := range activeTenants {
 		c := consumptionMap[tenant.ID]
@@ -55,8 +130,13 @@ func CalculateBills(
 		extraChargesTotalShare := decimal.Zero
 
 		for _, extra := range masterBill.ExtraCharges {
-			// tenant_share = amount / N
-			share := extra.Amount.Div(divisor).Round(2)
+			// Default to an equal split; explicit allocations override the amount per tenant.
+			share := defaultShares[extra.ID.String()+tenant.ID.String()]
+			if byTenant := allocationMap[extra.ID]; byTenant != nil {
+				if custom, ok := byTenant[tenant.ID]; ok {
+					share = custom
+				}
+			}
 			extraChargesTotalShare = extraChargesTotalShare.Add(share)
 
 			extraID := extra.ID
@@ -67,6 +147,7 @@ func CalculateBills(
 				OriginalAmount: extra.Amount,
 				TenantsCount:   n,
 				TenantShare:    share,
+				AmountToCharge: share,
 			})
 		}
 

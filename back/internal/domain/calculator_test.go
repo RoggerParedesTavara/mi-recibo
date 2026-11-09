@@ -134,3 +134,55 @@ func TestCalculateConsumptionVariation(t *testing.T) {
 		t.Errorf("expected alert message to be non-empty")
 	}
 }
+
+func TestCalculateBillsCustomExtraAllocationAndCentRemainder(t *testing.T) {
+	masterBillID := uuid.New()
+	chargeID := uuid.New()
+	tenants := []domain.Tenant{{ID: uuid.New(), Name: "Ana"}, {ID: uuid.New(), Name: "Bruno"}, {ID: uuid.New(), Name: "Carla"}}
+	masterBill := &domain.MasterBill{ID: masterBillID, UnitPrice: decimal.NewFromInt(1), ProviderTotalAmount: decimalPtr("9999"), ExtraCharges: []domain.MasterBillExtraCharge{{ID: chargeID, Description: "Impuesto", Amount: decimal.NewFromInt(2)}}}
+	consumptions := []domain.TenantConsumption{
+		{MasterBillID: masterBillID, TenantID: tenants[0].ID, ConsumedUnits: decimal.NewFromInt(1)},
+		{MasterBillID: masterBillID, TenantID: tenants[1].ID, ConsumedUnits: decimal.NewFromInt(2)},
+		{MasterBillID: masterBillID, TenantID: tenants[2].ID, ConsumedUnits: decimal.NewFromInt(3)},
+	}
+	result, err := domain.CalculateBills(masterBill, tenants, consumptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultTotal := decimal.Zero
+	for _, bill := range result.TenantBills {
+		defaultTotal = defaultTotal.Add(bill.Breakdowns[0].AmountToCharge)
+	}
+	if !defaultTotal.Equal(decimal.NewFromInt(2)) {
+		t.Fatalf("default cent split should equal original amount, got %s", defaultTotal)
+	}
+	if !result.TenantBills[0].Breakdowns[0].AmountToCharge.Equal(decimal.NewFromFloat(0.67)) || !result.TenantBills[2].Breakdowns[0].AmountToCharge.Equal(decimal.NewFromFloat(0.66)) {
+		t.Fatalf("unexpected deterministic remainder split: %+v", result.TenantBills)
+	}
+
+	allocations := []domain.ExtraChargeAllocation{
+		{ExtraChargeID: chargeID, TenantID: tenants[0].ID, AmountToCharge: decimal.NewFromFloat(0.25)},
+		{ExtraChargeID: chargeID, TenantID: tenants[1].ID, AmountToCharge: decimal.NewFromFloat(0.50)},
+		{ExtraChargeID: chargeID, TenantID: tenants[2].ID, AmountToCharge: decimal.Zero},
+	}
+	custom, err := domain.CalculateBillsWithAllocations(masterBill, tenants, consumptions, allocations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !custom.TenantBills[0].Breakdowns[0].AmountToCharge.Equal(decimal.NewFromFloat(0.25)) || !custom.TenantBills[2].Breakdowns[0].AmountToCharge.IsZero() {
+		t.Fatalf("custom amounts not preserved: %+v", custom.TenantBills)
+	}
+	if !custom.TenantBills[2].TotalAmount.Equal(decimal.NewFromInt(3)) {
+		t.Fatalf("provider total must not influence tenant bill: %s", custom.TenantBills[2].TotalAmount)
+	}
+
+	allocations[2].AmountToCharge = decimal.NewFromInt(2)
+	if _, err := domain.CalculateBillsWithAllocations(masterBill, tenants, consumptions, allocations); err == nil {
+		t.Fatal("expected validation error when allocations exceed original amount")
+	}
+}
+
+func decimalPtr(value string) *decimal.Decimal {
+	d := decimal.RequireFromString(value)
+	return &d
+}

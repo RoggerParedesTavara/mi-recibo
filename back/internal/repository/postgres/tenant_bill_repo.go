@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 )
 
 type TenantBillRepository struct {
@@ -28,10 +29,26 @@ func (r *TenantBillRepository) SaveCalculationResult(ctx context.Context, master
 	}
 	defer tx.Rollback(ctx)
 
-	// Clean up existing bills for this master_bill if recalculating
-	_, err = tx.Exec(ctx, `DELETE FROM tenant_bills WHERE master_bill_id = $1`, masterBillID)
-	if err != nil {
-		return fmt.Errorf("error al limpiar recibos anteriores: %w", err)
+	var status domain.MasterBillStatus
+	if err := tx.QueryRow(ctx, `SELECT status FROM master_bills WHERE id=$1 FOR UPDATE`, masterBillID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("error al validar estado del recibo: %w", err)
+	}
+	if status != domain.BillStatusDraft {
+		return domain.ErrConflict
+	}
+	var existing int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM tenant_bills WHERE master_bill_id=$1`, masterBillID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing > 0 {
+		return domain.ErrConflict
+	}
+	totalCharged := decimal.Zero
+	for _, bill := range bills {
+		totalCharged = totalCharged.Add(bill.TotalAmount)
 	}
 
 	insertBillQuery := `
@@ -48,9 +65,9 @@ func (r *TenantBillRepository) SaveCalculationResult(ctx context.Context, master
 	insertBreakdownQuery := `
 		INSERT INTO tenant_bill_charge_breakdowns (
 			id, tenant_bill_id, extra_charge_id, description, original_amount,
-			tenants_count, tenant_share, created_at
+			tenants_count, tenant_share, amount_to_charge, created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP
+			$1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP
 		)
 		RETURNING created_at
 	`
@@ -79,7 +96,7 @@ func (r *TenantBillRepository) SaveCalculationResult(ctx context.Context, master
 
 			err = tx.QueryRow(ctx, insertBreakdownQuery,
 				bd.ID, bd.TenantBillID, bd.ExtraChargeID, bd.Description, bd.OriginalAmount,
-				bd.TenantsCount, bd.TenantShare,
+				bd.TenantsCount, bd.TenantShare, bd.AmountToCharge,
 			).Scan(&bd.CreatedAt)
 			if err != nil {
 				return fmt.Errorf("error al guardar desglose de cargo '%s': %w", bd.Description, err)
@@ -90,9 +107,9 @@ func (r *TenantBillRepository) SaveCalculationResult(ctx context.Context, master
 	// Update master bill status to CALCULATED
 	_, err = tx.Exec(ctx, `
 		UPDATE master_bills
-		SET status = $2, updated_at = CURRENT_TIMESTAMP
+		SET status = $2, total_charged_amount = $3, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, masterBillID, domain.BillStatusCalculated)
+	`, masterBillID, domain.BillStatusCalculated, totalCharged)
 	if err != nil {
 		return fmt.Errorf("error al actualizar estado de recibo principal: %w", err)
 	}
@@ -105,7 +122,7 @@ func (r *TenantBillRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 		SELECT tb.id, tb.master_bill_id, tb.tenant_id, tb.consumed_units, tb.unit_price,
 		       tb.consumption_amount, tb.extra_charges_total_share, tb.total_amount, tb.status,
 		       tb.paid_at, tb.created_at, tb.updated_at,
-		       t.name AS tenant_name, t.room_or_unit, p.name AS property_name,
+		       t.name AS tenant_name, COALESCE(u.name, t.room_or_unit, '') AS room_or_unit, p.name AS property_name, t.unit_id, COALESCE(u.name, '') AS unit_name,
 		       mb.service_type, mb.billing_year, mb.billing_month,
 		       COALESCE(tc.alert_spike, false) AS alert_spike,
 		       COALESCE(tc.alert_message, '') AS alert_message,
@@ -114,6 +131,7 @@ func (r *TenantBillRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 		JOIN tenants t ON t.id = tb.tenant_id
 		JOIN master_bills mb ON mb.id = tb.master_bill_id
 		JOIN properties p ON p.id = mb.property_id
+		LEFT JOIN units u ON u.id = t.unit_id
 		LEFT JOIN tenant_consumptions tc ON tc.master_bill_id = tb.master_bill_id AND tc.tenant_id = tb.tenant_id
 		WHERE tb.id = $1
 	`
@@ -122,7 +140,7 @@ func (r *TenantBillRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 		&detail.ID, &detail.MasterBillID, &detail.TenantID, &detail.ConsumedUnits, &detail.UnitPrice,
 		&detail.ConsumptionAmount, &detail.ExtraChargesTotalShare, &detail.TotalAmount, &detail.Status,
 		&detail.PaidAt, &detail.CreatedAt, &detail.UpdatedAt,
-		&detail.TenantName, &detail.RoomOrUnit, &detail.PropertyName,
+		&detail.TenantName, &detail.RoomOrUnit, &detail.PropertyName, &detail.UnitID, &detail.UnitName,
 		&detail.ServiceType, &detail.BillingYear, &detail.BillingMonth,
 		&detail.AlertSpike, &detail.AlertMessage, &detail.PreviousMonthUnits,
 	)
@@ -148,7 +166,7 @@ func (r *TenantBillRepository) ListByMasterBillID(ctx context.Context, masterBil
 		SELECT tb.id, tb.master_bill_id, tb.tenant_id, tb.consumed_units, tb.unit_price,
 		       tb.consumption_amount, tb.extra_charges_total_share, tb.total_amount, tb.status,
 		       tb.paid_at, tb.created_at, tb.updated_at,
-		       t.name AS tenant_name, t.room_or_unit, p.name AS property_name,
+		       t.name AS tenant_name, COALESCE(u.name, t.room_or_unit, '') AS room_or_unit, p.name AS property_name, t.unit_id, COALESCE(u.name, '') AS unit_name,
 		       mb.service_type, mb.billing_year, mb.billing_month,
 		       COALESCE(tc.alert_spike, false) AS alert_spike,
 		       COALESCE(tc.alert_message, '') AS alert_message,
@@ -157,6 +175,7 @@ func (r *TenantBillRepository) ListByMasterBillID(ctx context.Context, masterBil
 		JOIN tenants t ON t.id = tb.tenant_id
 		JOIN master_bills mb ON mb.id = tb.master_bill_id
 		JOIN properties p ON p.id = mb.property_id
+		LEFT JOIN units u ON u.id = t.unit_id
 		LEFT JOIN tenant_consumptions tc ON tc.master_bill_id = tb.master_bill_id AND tc.tenant_id = tb.tenant_id
 		WHERE tb.master_bill_id = $1
 		ORDER BY t.name ASC
@@ -174,7 +193,7 @@ func (r *TenantBillRepository) ListByMasterBillID(ctx context.Context, masterBil
 			&d.ID, &d.MasterBillID, &d.TenantID, &d.ConsumedUnits, &d.UnitPrice,
 			&d.ConsumptionAmount, &d.ExtraChargesTotalShare, &d.TotalAmount, &d.Status,
 			&d.PaidAt, &d.CreatedAt, &d.UpdatedAt,
-			&d.TenantName, &d.RoomOrUnit, &d.PropertyName,
+			&d.TenantName, &d.RoomOrUnit, &d.PropertyName, &d.UnitID, &d.UnitName,
 			&d.ServiceType, &d.BillingYear, &d.BillingMonth,
 			&d.AlertSpike, &d.AlertMessage, &d.PreviousMonthUnits,
 		); err != nil {
@@ -200,7 +219,7 @@ func (r *TenantBillRepository) ListByTenantID(ctx context.Context, tenantID uuid
 		SELECT tb.id, tb.master_bill_id, tb.tenant_id, tb.consumed_units, tb.unit_price,
 		       tb.consumption_amount, tb.extra_charges_total_share, tb.total_amount, tb.status,
 		       tb.paid_at, tb.created_at, tb.updated_at,
-		       t.name AS tenant_name, t.room_or_unit, p.name AS property_name,
+		       t.name AS tenant_name, COALESCE(u.name, t.room_or_unit, '') AS room_or_unit, p.name AS property_name, t.unit_id, COALESCE(u.name, '') AS unit_name,
 		       mb.service_type, mb.billing_year, mb.billing_month,
 		       COALESCE(tc.alert_spike, false) AS alert_spike,
 		       COALESCE(tc.alert_message, '') AS alert_message,
@@ -209,6 +228,7 @@ func (r *TenantBillRepository) ListByTenantID(ctx context.Context, tenantID uuid
 		JOIN tenants t ON t.id = tb.tenant_id
 		JOIN master_bills mb ON mb.id = tb.master_bill_id
 		JOIN properties p ON p.id = mb.property_id
+		LEFT JOIN units u ON u.id = t.unit_id
 		LEFT JOIN tenant_consumptions tc ON tc.master_bill_id = tb.master_bill_id AND tc.tenant_id = tb.tenant_id
 		WHERE tb.tenant_id = $1
 		ORDER BY mb.billing_year DESC, mb.billing_month DESC
@@ -226,7 +246,7 @@ func (r *TenantBillRepository) ListByTenantID(ctx context.Context, tenantID uuid
 			&d.ID, &d.MasterBillID, &d.TenantID, &d.ConsumedUnits, &d.UnitPrice,
 			&d.ConsumptionAmount, &d.ExtraChargesTotalShare, &d.TotalAmount, &d.Status,
 			&d.PaidAt, &d.CreatedAt, &d.UpdatedAt,
-			&d.TenantName, &d.RoomOrUnit, &d.PropertyName,
+			&d.TenantName, &d.RoomOrUnit, &d.PropertyName, &d.UnitID, &d.UnitName,
 			&d.ServiceType, &d.BillingYear, &d.BillingMonth,
 			&d.AlertSpike, &d.AlertMessage, &d.PreviousMonthUnits,
 		); err != nil {
@@ -271,7 +291,7 @@ func (r *TenantBillRepository) UpdatePaymentStatus(ctx context.Context, id uuid.
 func (r *TenantBillRepository) getBreakdowns(ctx context.Context, tenantBillID uuid.UUID) ([]domain.TenantBillChargeBreakdown, error) {
 	query := `
 		SELECT id, tenant_bill_id, extra_charge_id, description, original_amount,
-		       tenants_count, tenant_share, created_at
+		       tenants_count, tenant_share, amount_to_charge, created_at
 		FROM tenant_bill_charge_breakdowns
 		WHERE tenant_bill_id = $1
 		ORDER BY created_at ASC
@@ -287,7 +307,7 @@ func (r *TenantBillRepository) getBreakdowns(ctx context.Context, tenantBillID u
 		var b domain.TenantBillChargeBreakdown
 		if err := rows.Scan(
 			&b.ID, &b.TenantBillID, &b.ExtraChargeID, &b.Description, &b.OriginalAmount,
-			&b.TenantsCount, &b.TenantShare, &b.CreatedAt,
+			&b.TenantsCount, &b.TenantShare, &b.AmountToCharge, &b.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("error al escanear desglose: %w", err)
 		}

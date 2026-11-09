@@ -35,6 +35,8 @@ func RespondError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, domain.ErrMissingConsumptions):
 		status = http.StatusBadRequest
+	case errors.Is(err, domain.ErrUnitWithoutPrimary):
+		status = http.StatusBadRequest
 	case errors.Is(err, domain.ErrAlreadyCalculated):
 		status = http.StatusConflict
 	}

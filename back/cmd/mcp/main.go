@@ -31,6 +31,7 @@ func main() {
 	// Repositories
 	ownerRepo := postgres.NewOwnerRepository(db.Pool)
 	propertyRepo := postgres.NewPropertyRepository(db.Pool)
+	unitRepo := postgres.NewUnitRepository(db.Pool)
 	tenantRepo := postgres.NewTenantRepository(db.Pool)
 	masterBillRepo := postgres.NewMasterBillRepository(db.Pool)
 	consumptionRepo := postgres.NewConsumptionRepository(db.Pool)
@@ -46,6 +47,7 @@ func main() {
 		tenantRepo,
 		propertyRepo,
 		cfg.ConsumptionAlertSpikeThreshold,
+		unitRepo,
 	)
 
 	// Create MCP Server
