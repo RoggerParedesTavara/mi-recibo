@@ -9,7 +9,7 @@ Sistema integral para la gestión y prorrateo de recibos de servicios básicos (
 ```
 mi-recibo/
 ├── back/     # Backend en Go + PostgreSQL 16 (API REST y servidor MCP)
-├── front/    # Frontend de la aplicación (próximamente)
+├── front-mobile/ # Aplicación móvil React Native
 └── LICENSE   # Licencia MIT
 ```
 
@@ -30,5 +30,5 @@ Consulta la documentación detallada del backend en **[`back/README.md`](./back/
 
 ---
 
-### 💻 Frontend (`front/`)
-*(En desarrollo)*
+### 📱 App móvil (`front-mobile/`)
+Aplicación React Native para propietarios, con persistencia local de mediciones y cálculos de recibos. Consulta [`front-mobile/README.md`](./front-mobile/README.md) para instalar, ejecutar y verificar la app.
