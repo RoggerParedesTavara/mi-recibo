@@ -5,6 +5,7 @@ import { calculateConsumedUnits } from '../modules/consumptions/domain/calculate
 import { calculateTenantServiceBill } from '../modules/billing/domain/calculateTenantServiceBill';
 import type { ServiceBillingConfig } from '../modules/billing/models/serviceBillingConfig';
 import { localMeasurementRepository } from '../modules/consumptions/api/localMeasurementRepository';
+import { syncPendingMeasurements } from '../modules/consumptions/api/syncQueue';
 import type { UtilityService } from '../modules/consumptions/models/measurement';
 import type { LocalProperty, LocalUnit } from '../modules/properties/models/localProperty';
 import type { LocalTenant } from '../modules/tenants/models/localTenant';
@@ -108,7 +109,12 @@ export function ServiceReadingScreen({ property, unit, tenant, service, onBack, 
         previousReading,
         currentReading: currentReading.trim().replace(',', '.'),
       });
-      Alert.alert('Lectura guardada', 'Se guardó en este dispositivo y queda pendiente de sincronización.');
+      // Sincronización en segundo plano (Outbox Pattern)
+      syncPendingMeasurements().catch(() => {});
+      Alert.alert(
+        'Lectura guardada',
+        'Se guardó localmente con cálculo inmediato. Se sincronizará automáticamente con el backend cuando haya conexión.',
+      );
       onSaved();
     } catch (error) {
       Alert.alert('No se pudo guardar', error instanceof Error ? error.message : 'Intenta nuevamente.');
