@@ -85,27 +85,9 @@ Configura `API_BASE_URL` según tu entorno:
   API_BASE_URL=http://<IP_LOCAL_DE_TU_PC>:8080/api/v1
   ```
 
-### 3. Instalar Pods (Sólo para iOS)
+### 3. Compilar y correr en el dispositivo/emulador
 
-En macOS, antes de compilar para iOS:
-
-```bash
-cd ios
-pod install
-cd ..
-```
-
-### 4. Iniciar el empaquetador Metro
-
-En una terminal dedicada:
-
-```bash
-npm start
-```
-
-### 5. Compilar y correr en el dispositivo/emulador
-
-En otra terminal:
+Los comandos de ejecución compilan e instalan la app. En iOS, `npm run ios` ejecuta `pod install` automáticamente antes del build. En Android, React Native enlaza las dependencias nativas durante el build de Gradle.
 
 - **Para iOS**:
   ```bash
@@ -115,6 +97,8 @@ En otra terminal:
   ```bash
   npm run android
   ```
+
+Metro queda activo para Fast Refresh. Para iniciarlo manualmente con la caché limpia, ejecuta `npm start` en otra terminal; `Ctrl+C` lo detiene.
 
 ---
 
