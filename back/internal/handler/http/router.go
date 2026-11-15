@@ -6,6 +6,7 @@ import (
 	"github.com/RoggerParedesTavara/mi-recibo/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type RouterParams struct {
@@ -29,6 +30,7 @@ func NewRouter(p RouterParams) http.Handler {
 	r.Use(corsMiddleware)
 
 	// Health check
+	r.Handle("/metrics", promhttp.Handler())
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		RespondJSON(w, http.StatusOK, map[string]string{
 			"status":  "ok",

@@ -5,6 +5,9 @@ back/mcp
 back/.env
 .env
 
+# Local deployment environment and service configuration
+deploy/
+
 # Go
 *.exe
 *.exe~

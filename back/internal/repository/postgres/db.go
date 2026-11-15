@@ -54,15 +54,35 @@ func (db *DB) RunMigrations(ctx context.Context, migrationsDir string) error {
 		return fmt.Errorf("error buscando migraciones: %w", err)
 	}
 
+	// Both API replicas start at the same time. Keep the migration lock and
+	// transaction on one PostgreSQL connection so only one replica migrates.
+	conn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("error adquiriendo conexión para migraciones: %w", err)
+	}
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("error iniciando transacción de migraciones: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(742018421)"); err != nil {
+		return fmt.Errorf("error adquiriendo bloqueo de migraciones: %w", err)
+	}
+
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
 			return fmt.Errorf("error leyendo archivo de migración %s: %w", file, err)
 		}
 
-		if _, err := db.Pool.Exec(ctx, string(content)); err != nil {
+		if _, err := tx.Exec(ctx, string(content)); err != nil {
 			return fmt.Errorf("error ejecutando migración %s: %w", file, err)
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("error confirmando migraciones: %w", err)
 	}
 
 	return nil
