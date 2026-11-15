@@ -21,6 +21,16 @@ go.work
 go.work.sum
 
 # Frontend dependencies & build artifacts
+front-mobile/node_modules/
+front-mobile/.env
+front-mobile/.env.local
+front-mobile/.env.*.local
+front-mobile/build/
+front-mobile/coverage/
+front-mobile/ios/Pods/
+front-mobile/ios/build/
+front-mobile/android/app/build/
+front-mobile/android/.gradle/
 front/node_modules/
 front/.next/
 front/dist/
