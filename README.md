@@ -288,12 +288,9 @@ Para profundizar en áreas específicas del proyecto, consulta la documentación
 <details>
 <summary><b>2. La app móvil en Android muestra "Network Error" al llamar a la API</b></summary>
 
-- Recuerda que en el emulador de Android `localhost` hace referencia al propio teléfono virtual.
-- Cambia la variable en `front-mobile/.env` a:
-  ```env
-  API_BASE_URL=http://10.0.2.2:8080/api/v1
-  ```
-- Reinicia el empaquetador Metro con `npm start -- --reset-cache`.
+- En el emulador local usa `npm run android -- --env local`; ese perfil apunta al túnel SSH de esta PC.
+- Para el servidor remoto de desarrollo usa `npm run android -- --env development`.
+- El dominio de development debe estar encaminado hacia Caddy/API. Cambiar el perfil no configura Funnel.
 </details>
 
 <details>

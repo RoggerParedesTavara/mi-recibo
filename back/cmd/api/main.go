@@ -65,6 +65,14 @@ func main() {
 	propertyService := service.NewPropertyService(ownerRepo, propertyRepo)
 	tenantService := service.NewTenantService(tenantRepo, propertyRepo, unitRepo)
 	unitService := service.NewUnitService(unitRepo, propertyRepo)
+	authorizationService := service.NewAuthorizationService(
+		ownerRepo,
+		propertyRepo,
+		tenantRepo,
+		unitRepo,
+		masterBillRepo,
+		tenantBillRepo,
+	)
 	billingService := service.NewBillingService(
 		masterBillRepo,
 		consumptionRepo,
@@ -84,13 +92,14 @@ func main() {
 	unitHandler := httpHandler.NewUnitHandler(unitService)
 
 	router := httpHandler.NewRouter(httpHandler.RouterParams{
-		AuthHandler:     authHandler,
-		AuthService:     authService,
-		OwnerHandler:    ownerHandler,
-		PropertyHandler: propertyHandler,
-		TenantHandler:   tenantHandler,
-		BillHandler:     billHandler,
-		UnitHandler:     unitHandler,
+		AuthHandler:          authHandler,
+		AuthService:          authService,
+		AuthorizationService: authorizationService,
+		OwnerHandler:         ownerHandler,
+		PropertyHandler:      propertyHandler,
+		TenantHandler:        tenantHandler,
+		BillHandler:          billHandler,
+		UnitHandler:          unitHandler,
 	})
 
 	server := &http.Server{

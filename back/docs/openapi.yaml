@@ -9,12 +9,15 @@ info:
 servers:
   - url: http://localhost:8080/api/v1
     description: Servidor Local de Desarrollo
+security:
+  - BearerAuth: []
 
 paths:
   /auth/register:
     post:
       summary: Registrar nuevo propietario y generar token JWT
       tags: [Autenticación]
+      security: []
       requestBody:
         required: true
         content:
@@ -37,6 +40,7 @@ paths:
     post:
       summary: Iniciar sesión de propietario
       tags: [Autenticación]
+      security: []
       requestBody:
         required: true
         content:
@@ -59,6 +63,7 @@ paths:
     post:
       summary: Renovar el access token y rotar el refresh token
       tags: [Autenticación]
+      security: []
       requestBody:
         required: true
         content:
@@ -79,6 +84,7 @@ paths:
     post:
       summary: Revocar la sesión asociada al refresh token
       tags: [Autenticación]
+      security: []
       requestBody:
         required: true
         content:

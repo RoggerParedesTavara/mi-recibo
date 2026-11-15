@@ -82,6 +82,13 @@ func (s *TenantService) UpdateTenant(ctx context.Context, tenant *domain.Tenant)
 	if strings.TrimSpace(tenant.Name) == "" {
 		return nil, domain.ErrValidation
 	}
+	existing, err := s.tenantRepo.GetByID(ctx, tenant.ID)
+	if err != nil {
+		return nil, err
+	}
+	// A tenant stays attached to its original property. Do not trust a
+	// client-supplied property_id when validating a new unit assignment.
+	tenant.PropertyID = existing.PropertyID
 	if tenant.UnitID != nil {
 		if s.unitRepo == nil {
 			return nil, domain.ErrValidation

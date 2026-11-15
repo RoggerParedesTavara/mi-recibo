@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/RoggerParedesTavara/mi-recibo/internal/domain"
 	"github.com/RoggerParedesTavara/mi-recibo/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -10,13 +11,14 @@ import (
 )
 
 type RouterParams struct {
-	AuthHandler     *AuthHandler
-	AuthService     *service.AuthService
-	OwnerHandler    *OwnerHandler
-	PropertyHandler *PropertyHandler
-	TenantHandler   *TenantHandler
-	BillHandler     *BillHandler
-	UnitHandler     *UnitHandler
+	AuthHandler          *AuthHandler
+	AuthService          *service.AuthService
+	AuthorizationService *service.AuthorizationService
+	OwnerHandler         *OwnerHandler
+	PropertyHandler      *PropertyHandler
+	TenantHandler        *TenantHandler
+	BillHandler          *BillHandler
+	UnitHandler          *UnitHandler
 }
 
 func NewRouter(p RouterParams) http.Handler {
@@ -53,50 +55,62 @@ func NewRouter(p RouterParams) http.Handler {
 			})
 		}
 
-		// Owners
-		r.Route("/owners", func(r chi.Router) {
-			r.Post("/", p.OwnerHandler.CreateOwner)
-			r.Get("/{id}", p.OwnerHandler.GetOwner)
-			r.Post("/{owner_id}/properties", p.PropertyHandler.CreateProperty)
-			r.Get("/{owner_id}/properties", p.PropertyHandler.ListPropertiesByOwner)
-		})
+		// All business resources require a valid session and are scoped to its owner.
+		r.Group(func(r chi.Router) {
+			if p.AuthService == nil {
+				r.Use(rejectProtectedRequests)
+			} else {
+				r.Use(AuthMiddleware(p.AuthService))
+			}
 
-		// Properties
-		r.Route("/properties", func(r chi.Router) {
-			r.Get("/{id}", p.PropertyHandler.GetProperty)
-			r.Post("/{property_id}/tenants", p.TenantHandler.CreateTenant)
-			r.Get("/{property_id}/tenants", p.TenantHandler.ListTenantsByProperty)
-			r.Post("/{property_id}/units", p.UnitHandler.Create)
-			r.Get("/{property_id}/units", p.UnitHandler.List)
-			r.Post("/{property_id}/master-bills", p.BillHandler.CreateMasterBill)
-			r.Get("/{property_id}/master-bills", p.BillHandler.ListMasterBills)
-		})
+			// Owner registration lives under /auth/register. Keep the legacy
+			// create endpoint authenticated while existing clients migrate.
+			r.Route("/owners", func(r chi.Router) {
+				r.Post("/", p.OwnerHandler.CreateOwner)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceOwner, "id")).Get("/{id}", p.OwnerHandler.GetOwner)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceOwner, "owner_id")).Post("/{owner_id}/properties", p.PropertyHandler.CreateProperty)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceOwner, "owner_id")).Get("/{owner_id}/properties", p.PropertyHandler.ListPropertiesByOwner)
+			})
 
-		// Tenants
-		r.Route("/tenants", func(r chi.Router) {
-			r.Put("/{id}", p.TenantHandler.UpdateTenant)
-			r.Get("/{id}/bills", p.TenantHandler.ListTenantBills)
-		})
-		r.Put("/units/{id}", p.UnitHandler.Update)
+			r.Route("/properties", func(r chi.Router) {
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "id")).Get("/{id}", p.PropertyHandler.GetProperty)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "property_id")).Post("/{property_id}/tenants", p.TenantHandler.CreateTenant)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "property_id")).Get("/{property_id}/tenants", p.TenantHandler.ListTenantsByProperty)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "property_id")).Post("/{property_id}/units", p.UnitHandler.Create)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "property_id")).Get("/{property_id}/units", p.UnitHandler.List)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "property_id")).Post("/{property_id}/master-bills", p.BillHandler.CreateMasterBill)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceProperty, "property_id")).Get("/{property_id}/master-bills", p.BillHandler.ListMasterBills)
+			})
 
-		// Master Bills
-		r.Route("/master-bills", func(r chi.Router) {
-			r.Get("/{id}", p.BillHandler.GetMasterBill)
-			r.Put("/{id}", p.BillHandler.UpdateMasterBill)
-			r.Post("/{id}/consumptions", p.BillHandler.RecordConsumptions)
-			r.Post("/{id}/preview", p.BillHandler.PreviewMasterBill)
-			r.Post("/{id}/calculate", p.BillHandler.CalculateMasterBill)
-			r.Get("/{id}/tenant-bills", p.BillHandler.ListMasterBillTenantBills)
-		})
+			r.Route("/tenants", func(r chi.Router) {
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenant, "id")).Put("/{id}", p.TenantHandler.UpdateTenant)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenant, "id")).Get("/{id}/bills", p.TenantHandler.ListTenantBills)
+			})
+			r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceUnit, "id")).Put("/units/{id}", p.UnitHandler.Update)
 
-		// Tenant Bills
-		r.Route("/tenant-bills", func(r chi.Router) {
-			r.Get("/{id}", p.BillHandler.GetTenantBill)
-			r.Patch("/{id}/payment", p.BillHandler.UpdateTenantBillPayment)
+			r.Route("/master-bills", func(r chi.Router) {
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceMasterBill, "id")).Get("/{id}", p.BillHandler.GetMasterBill)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceMasterBill, "id")).Put("/{id}", p.BillHandler.UpdateMasterBill)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceMasterBill, "id")).Post("/{id}/consumptions", p.BillHandler.RecordConsumptions)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceMasterBill, "id")).Post("/{id}/preview", p.BillHandler.PreviewMasterBill)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceMasterBill, "id")).Post("/{id}/calculate", p.BillHandler.CalculateMasterBill)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceMasterBill, "id")).Get("/{id}/tenant-bills", p.BillHandler.ListMasterBillTenantBills)
+			})
+
+			r.Route("/tenant-bills", func(r chi.Router) {
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenantBill, "id")).Get("/{id}", p.BillHandler.GetTenantBill)
+				r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenantBill, "id")).Patch("/{id}/payment", p.BillHandler.UpdateTenantBillPayment)
+			})
 		})
 	})
 
 	return r
+}
+
+func rejectProtectedRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		RespondError(w, domain.ErrUnauthorized)
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

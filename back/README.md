@@ -142,6 +142,8 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
 
 Usa `access_token` como `Authorization: Bearer <access_token>`. Al recibir `401` con código `ACCESS_TOKEN_EXPIRED`, envía el `refresh_token` a `POST /api/v1/auth/refresh`; guarda ambos tokens nuevos. `POST /api/v1/auth/logout` revoca la sesión.
 
+Todas las rutas de negocio requieren ese Bearer token. El backend obtiene el propietario desde el token y verifica que cada propiedad, unidad, inquilino y recibo pertenezca a ese propietario; no confíes en un `owner_id` enviado por el cliente. Las rutas de registro, login y refresh son públicas.
+
 Configura `JWT_SECRET` con al menos 32 caracteres en producción. `JWT_ACCESS_TOKEN_SECONDS` y `JWT_REFRESH_TOKEN_DAYS` permiten ajustar los vencimientos; en producción el access token debe durar al menos 60 segundos.
 
 ### 2. Configurar variables de entorno
@@ -192,18 +194,21 @@ go test -v ./...
 
 ### 1. Registrar Dueño
 ```bash
-curl -X POST http://localhost:8080/api/v1/owners \
+curl -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Carlos Dueño",
     "email": "carlos@ejemplo.com",
+    "password": "ClaveSegura123!",
     "phone": "+54911223344"
   }'
 ```
+Guarda `access_token` de la respuesta para las siguientes llamadas.
 
 ### 2. Registrar Propiedad (Casa)
 ```bash
 curl -X POST http://localhost:8080/api/v1/owners/{owner_id}/properties \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Casa Los Rosales",
@@ -214,6 +219,7 @@ curl -X POST http://localhost:8080/api/v1/owners/{owner_id}/properties \
 ### 3. Registrar pisos/unidades y su inquilino principal
 ```bash
 curl -X POST http://localhost:8080/api/v1/properties/{property_id}/units \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" -d '{"name":"Piso 1"}'
 ```
 Al crear el inquilino se envía el `unit_id` de esa unidad.
@@ -221,6 +227,7 @@ Al crear el inquilino se envía el `unit_id` de esa unidad.
 ### 4. Registrar Inquilinos
 ```bash
 curl -X POST http://localhost:8080/api/v1/properties/{property_id}/tenants \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Juan Pérez",
@@ -234,6 +241,7 @@ curl -X POST http://localhost:8080/api/v1/properties/{property_id}/tenants \
 ### 5. Cargar Recibo Principal con Lista Dinámica de Cargos Extras
 ```bash
 curl -X POST http://localhost:8080/api/v1/properties/{property_id}/master-bills \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "service_type": "LUZ",
@@ -262,6 +270,7 @@ curl -X POST http://localhost:8080/api/v1/properties/{property_id}/master-bills 
 ### 6. Cargar Consumos Mensuales de Inquilinos
 ```bash
 curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/consumptions \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "readings": [
@@ -284,12 +293,14 @@ curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/consumpt
 ### 7. Revisar y ejecutar liquidación
 `POST /api/v1/master-bills/{master_bill_id}/preview` devuelve subrecibos sin guardarlos. Se puede enviar `extra_charge_allocations` para modificar cargos individuales. `POST .../calculate` persiste la liquidación. Un borrador puede retomarse con `PUT /api/v1/master-bills/{master_bill_id}`.
 ```bash
-curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/calculate
+curl -X POST http://localhost:8080/api/v1/master-bills/{master_bill_id}/calculate \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 ### 8. Consultar Recibo Individual del Inquilino con Desglose
 ```bash
-curl -X GET http://localhost:8080/api/v1/tenant-bills/{tenant_bill_id}
+curl -X GET http://localhost:8080/api/v1/tenant-bills/{tenant_bill_id} \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 *Ejemplo de Respuesta:*
 ```json
@@ -337,6 +348,7 @@ curl -X GET http://localhost:8080/api/v1/tenant-bills/{tenant_bill_id}
 ### 8. Marcar Recibo como Pagado
 ```bash
 curl -X PATCH http://localhost:8080/api/v1/tenant-bills/{tenant_bill_id}/payment \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"is_paid": true}'
 ```
