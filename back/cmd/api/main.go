@@ -40,13 +40,13 @@ func main() {
 	// 3. Run database migrations
 	migrationsDir := "migrations"
 	if err := db.RunMigrations(context.Background(), migrationsDir); err != nil {
-		log.Printf("Advertencia en migraciones (pueden ya estar aplicadas): %v", err)
-	} else {
-		log.Println("Migraciones SQL ejecutadas correctamente.")
+		log.Fatalf("Error ejecutando migraciones: %v", err)
 	}
+	log.Println("Migraciones SQL ejecutadas correctamente.")
 
 	// 4. Initialize Repositories
 	ownerRepo := postgres.NewOwnerRepository(db.Pool)
+	refreshSessionRepo := postgres.NewRefreshSessionRepository(db.Pool)
 	propertyRepo := postgres.NewPropertyRepository(db.Pool)
 	unitRepo := postgres.NewUnitRepository(db.Pool)
 	tenantRepo := postgres.NewTenantRepository(db.Pool)
@@ -55,6 +55,13 @@ func main() {
 	tenantBillRepo := postgres.NewTenantBillRepository(db.Pool)
 
 	// 5. Initialize Services
+	authService := service.NewAuthServiceWithRefreshSessions(
+		ownerRepo,
+		refreshSessionRepo,
+		cfg.JWTSecret,
+		time.Duration(cfg.JWTAccessTokenSeconds)*time.Second,
+		time.Duration(cfg.JWTRefreshTokenDays)*24*time.Hour,
+	)
 	propertyService := service.NewPropertyService(ownerRepo, propertyRepo)
 	tenantService := service.NewTenantService(tenantRepo, propertyRepo, unitRepo)
 	unitService := service.NewUnitService(unitRepo, propertyRepo)
@@ -69,6 +76,7 @@ func main() {
 	)
 
 	// 6. Initialize HTTP Handlers & Router
+	authHandler := httpHandler.NewAuthHandler(authService)
 	ownerHandler := httpHandler.NewOwnerHandler(propertyService)
 	propertyHandler := httpHandler.NewPropertyHandler(propertyService)
 	tenantHandler := httpHandler.NewTenantHandler(tenantService, billingService)
@@ -76,6 +84,8 @@ func main() {
 	unitHandler := httpHandler.NewUnitHandler(unitService)
 
 	router := httpHandler.NewRouter(httpHandler.RouterParams{
+		AuthHandler:     authHandler,
+		AuthService:     authService,
 		OwnerHandler:    ownerHandler,
 		PropertyHandler: propertyHandler,
 		TenantHandler:   tenantHandler,

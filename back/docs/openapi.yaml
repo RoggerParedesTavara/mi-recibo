@@ -11,6 +11,100 @@ servers:
     description: Servidor Local de Desarrollo
 
 paths:
+  /auth/register:
+    post:
+      summary: Registrar nuevo propietario y generar token JWT
+      tags: [Autenticación]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Propietario registrado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /auth/login:
+    post:
+      summary: Iniciar sesión de propietario
+      tags: [Autenticación]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Inicio de sesión exitoso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      summary: Renovar el access token y rotar el refresh token
+      tags: [Autenticación]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Tokens renovados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      summary: Revocar la sesión asociada al refresh token
+      tags: [Autenticación]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: Sesión cerrada
+
+  /auth/me:
+    get:
+      summary: Consultar perfil del propietario autenticado
+      tags: [Autenticación]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Perfil del usuario autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Owner'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /owners:
     post:
       summary: Registrar nuevo propietario
@@ -525,6 +619,12 @@ paths:
                     type: string
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
     Owner:
       type: object
@@ -949,14 +1049,92 @@ components:
           type: array
           items: {$ref: '#/components/schemas/TenantBillDetail'}
 
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+          example: "Carlos Dueño"
+        email:
+          type: string
+          format: email
+          example: "carlos@ejemplo.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          description: Entre 8 y 72 bytes; se conserva exactamente como se envía.
+          example: "ClaveSegura123!"
+        phone:
+          type: string
+          example: "+54911223344"
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "carlos@ejemplo.com"
+        password:
+          type: string
+          format: password
+          maxLength: 72
+          description: La contraseña distingue espacios y mayúsculas.
+          example: "ClaveSegura123!"
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          deprecated: true
+          description: Alias legado de access_token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        access_token:
+          type: string
+          description: JWT de acceso con vencimiento corto
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: Token opaco rotativo para renovar la sesión
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Segundos hasta el vencimiento del access token
+          example: 5
+        owner:
+          $ref: '#/components/schemas/Owner'
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
     ErrorResponse:
       type: object
       properties:
         error:
           type: string
           example: "error de validación"
+        code:
+          type: string
+          example: ACCESS_TOKEN_EXPIRED
 
   responses:
+    Unauthorized:
+      description: No autorizado o credenciales inválidas
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: Recurso no encontrado
       content:

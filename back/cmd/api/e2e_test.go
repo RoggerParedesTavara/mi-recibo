@@ -50,6 +50,7 @@ func setupTestServer(t *testing.T) (http.Handler, *postgres.DB) {
 	}
 
 	ownerRepo := postgres.NewOwnerRepository(db.Pool)
+	refreshSessionRepo := postgres.NewRefreshSessionRepository(db.Pool)
 	propertyRepo := postgres.NewPropertyRepository(db.Pool)
 	tenantRepo := postgres.NewTenantRepository(db.Pool)
 	unitRepo := postgres.NewUnitRepository(db.Pool)
@@ -57,6 +58,13 @@ func setupTestServer(t *testing.T) (http.Handler, *postgres.DB) {
 	consumptionRepo := postgres.NewConsumptionRepository(db.Pool)
 	tenantBillRepo := postgres.NewTenantBillRepository(db.Pool)
 
+	authService := service.NewAuthServiceWithRefreshSessions(
+		ownerRepo,
+		refreshSessionRepo,
+		cfg.JWTSecret,
+		time.Duration(cfg.JWTAccessTokenSeconds)*time.Second,
+		time.Duration(cfg.JWTRefreshTokenDays)*24*time.Hour,
+	)
 	propertyService := service.NewPropertyService(ownerRepo, propertyRepo)
 	tenantService := service.NewTenantService(tenantRepo, propertyRepo, unitRepo)
 	unitService := service.NewUnitService(unitRepo, propertyRepo)
@@ -70,6 +78,7 @@ func setupTestServer(t *testing.T) (http.Handler, *postgres.DB) {
 		unitRepo,
 	)
 
+	authHandler := httpHandler.NewAuthHandler(authService)
 	ownerHandler := httpHandler.NewOwnerHandler(propertyService)
 	propertyHandler := httpHandler.NewPropertyHandler(propertyService)
 	tenantHandler := httpHandler.NewTenantHandler(tenantService, billingService)
@@ -77,6 +86,8 @@ func setupTestServer(t *testing.T) (http.Handler, *postgres.DB) {
 	unitHandler := httpHandler.NewUnitHandler(unitService)
 
 	router := httpHandler.NewRouter(httpHandler.RouterParams{
+		AuthHandler:     authHandler,
+		AuthService:     authService,
 		OwnerHandler:    ownerHandler,
 		PropertyHandler: propertyHandler,
 		TenantHandler:   tenantHandler,

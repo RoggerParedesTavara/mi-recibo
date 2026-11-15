@@ -130,6 +130,20 @@ mi-recibo/
 - Go 1.22 o superior
 - PostgreSQL 16 (vía Docker o instalación local)
 
+### Autenticación
+
+El backend registra e inicia sesión de propietarios con email y contraseña. En desarrollo, el access token dura 5 segundos para facilitar la prueba del refresh; en producción la duración predeterminada es de 15 minutos. El refresh token opaco rota al renovarse y dura 30 días.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Carlos Dueño","email":"carlos@ejemplo.com","password":"ClaveSegura123!"}'
+```
+
+Usa `access_token` como `Authorization: Bearer <access_token>`. Al recibir `401` con código `ACCESS_TOKEN_EXPIRED`, envía el `refresh_token` a `POST /api/v1/auth/refresh`; guarda ambos tokens nuevos. `POST /api/v1/auth/logout` revoca la sesión.
+
+Configura `JWT_SECRET` con al menos 32 caracteres en producción. `JWT_ACCESS_TOKEN_SECONDS` y `JWT_REFRESH_TOKEN_DAYS` permiten ajustar los vencimientos; en producción el access token debe durar al menos 60 segundos.
+
 ### 2. Configurar variables de entorno
 Copia el archivo de ejemplo:
 ```bash

@@ -19,9 +19,10 @@ func NewOwnerHandler(propertyService *service.PropertyService) *OwnerHandler {
 }
 
 type CreateOwnerRequest struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Phone string `json:"phone"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Phone    string `json:"phone"`
+	Password string `json:"password,omitempty"`
 }
 
 func (h *OwnerHandler) CreateOwner(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +32,7 @@ func (h *OwnerHandler) CreateOwner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	owner, err := h.propertyService.CreateOwner(r.Context(), req.Name, req.Email, req.Phone)
+	owner, err := h.propertyService.CreateOwner(r.Context(), req.Name, req.Email, req.Phone, req.Password)
 	if err != nil {
 		RespondError(w, err)
 		return

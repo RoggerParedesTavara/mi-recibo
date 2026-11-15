@@ -7,7 +7,10 @@ import type {
   UnitDTO,
 } from '../../shared/api/types';
 import { readJson, writeJson } from '../../shared/storage/mmkv';
-import { syncPendingMeasurements, type SyncResult } from '../consumptions/api/syncQueue';
+import {
+  syncPendingMeasurements,
+  type SyncResult,
+} from '../consumptions/api/syncQueue';
 import type { LocalProperty } from '../properties/models/localProperty';
 import type { LocalTenant } from '../tenants/models/localTenant';
 
@@ -22,30 +25,19 @@ export interface FullSyncResult {
   message: string;
 }
 
-/**
- * Obtiene o inicializa el propietario activo en el backend.
- */
-export async function getOrInitRemoteOwner(ownerName: string = 'Coral'): Promise<OwnerDTO> {
+/** Obtiene el propietario autenticado; conserva la caché solo cuando no hay red. */
+export async function getAuthenticatedRemoteOwner(): Promise<OwnerDTO> {
   const cached = readJson<OwnerDTO | null>(ACTIVE_OWNER_KEY, null);
-  if (cached) {
-    try {
-      const remote = await apiClient.get<OwnerDTO>(apiRoutes.owners.getById(cached.id), { timeoutMs: 3000 });
-      writeJson(ACTIVE_OWNER_KEY, remote);
-      return remote;
-    } catch {
-      return cached; // Si está offline, usar el almacenado localmente
-    }
+  try {
+    const remote = await apiClient.get<OwnerDTO>(apiRoutes.auth.me(), {
+      timeoutMs: 3000,
+    });
+    writeJson(ACTIVE_OWNER_KEY, remote);
+    return remote;
+  } catch (error) {
+    if (cached && isNetworkError(error)) return cached;
+    throw error;
   }
-
-  // Registrar el propietario en el backend
-  const created = await apiClient.post<OwnerDTO>(apiRoutes.owners.create(), {
-    name: ownerName,
-    email: `${ownerName.toLowerCase()}@mirecibo.app`,
-    phone: '+54911000000',
-  });
-
-  writeJson(ACTIVE_OWNER_KEY, created);
-  return created;
 }
 
 /**
@@ -53,9 +45,9 @@ export async function getOrInitRemoteOwner(ownerName: string = 'Coral'): Promise
  * Si el backend está vacío, crea la estructura inicial de Casa Palermo.
  * Si está offline, preserva los datos existentes de MMKV.
  */
-export async function syncPropertiesAndTenants(ownerName: string = 'Coral'): Promise<boolean> {
+export async function syncPropertiesAndTenants(): Promise<boolean> {
   try {
-    const owner = await getOrInitRemoteOwner(ownerName);
+    const owner = await getAuthenticatedRemoteOwner();
     const propertiesUrl = apiRoutes.owners.listProperties(owner.id);
     let remoteProperties = await apiClient.get<PropertyDTO[]>(propertiesUrl);
 
@@ -66,28 +58,40 @@ export async function syncPropertiesAndTenants(ownerName: string = 'Coral'): Pro
         address: 'Av. Santa Fe 2450',
       });
 
-      const u1 = await apiClient.post<UnitDTO>(apiRoutes.properties.createUnit(createdProp.id), {
-        name: 'Piso 1 · Depto A',
-      });
-      const u2 = await apiClient.post<UnitDTO>(apiRoutes.properties.createUnit(createdProp.id), {
-        name: 'Piso 2 · Depto B',
-      });
+      const u1 = await apiClient.post<UnitDTO>(
+        apiRoutes.properties.createUnit(createdProp.id),
+        {
+          name: 'Piso 1 · Depto A',
+        },
+      );
+      const u2 = await apiClient.post<UnitDTO>(
+        apiRoutes.properties.createUnit(createdProp.id),
+        {
+          name: 'Piso 2 · Depto B',
+        },
+      );
 
-      await apiClient.post<TenantDTO>(apiRoutes.properties.createTenant(createdProp.id), {
-        name: 'Inquilino 1',
-        email: 'inquilino1@ejemplo.com',
-        phone: '+54911111111',
-        room_or_unit: 'Piso 1 · Depto A',
-        unit_id: u1.id,
-      });
+      await apiClient.post<TenantDTO>(
+        apiRoutes.properties.createTenant(createdProp.id),
+        {
+          name: 'Inquilino 1',
+          email: 'inquilino1@ejemplo.com',
+          phone: '+54911111111',
+          room_or_unit: 'Piso 1 · Depto A',
+          unit_id: u1.id,
+        },
+      );
 
-      await apiClient.post<TenantDTO>(apiRoutes.properties.createTenant(createdProp.id), {
-        name: 'Inquilino 2',
-        email: 'inquilino2@ejemplo.com',
-        phone: '+54911222222',
-        room_or_unit: 'Piso 2 · Depto B',
-        unit_id: u2.id,
-      });
+      await apiClient.post<TenantDTO>(
+        apiRoutes.properties.createTenant(createdProp.id),
+        {
+          name: 'Inquilino 2',
+          email: 'inquilino2@ejemplo.com',
+          phone: '+54911222222',
+          room_or_unit: 'Piso 2 · Depto B',
+          unit_id: u2.id,
+        },
+      );
 
       remoteProperties = [createdProp];
     }
@@ -97,8 +101,12 @@ export async function syncPropertiesAndTenants(ownerName: string = 'Coral'): Pro
     const allLocalTenants: LocalTenant[] = [];
 
     for (const prop of remoteProperties) {
-      const units = await apiClient.get<UnitDTO[]>(apiRoutes.properties.listUnits(prop.id));
-      const tenants = await apiClient.get<TenantDTO[]>(apiRoutes.properties.listTenants(prop.id));
+      const units = await apiClient.get<UnitDTO[]>(
+        apiRoutes.properties.listUnits(prop.id),
+      );
+      const tenants = await apiClient.get<TenantDTO[]>(
+        apiRoutes.properties.listTenants(prop.id),
+      );
 
       localProps.push({
         id: prop.id,
@@ -136,8 +144,8 @@ export async function syncPropertiesAndTenants(ownerName: string = 'Coral'): Pro
 /**
  * Orquestador de sincronización completa: entidades + lecturas pendientes.
  */
-export async function executeFullSync(ownerName: string = 'Coral'): Promise<FullSyncResult> {
-  const propertiesSynced = await syncPropertiesAndTenants(ownerName);
+export async function executeFullSync(): Promise<FullSyncResult> {
+  const propertiesSynced = await syncPropertiesAndTenants();
   const measurementsResult = await syncPendingMeasurements();
 
   const isOffline = !propertiesSynced || measurementsResult.isOffline;

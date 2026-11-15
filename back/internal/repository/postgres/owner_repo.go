@@ -22,15 +22,15 @@ func NewOwnerRepository(pool *pgxpool.Pool) *OwnerRepository {
 
 func (r *OwnerRepository) Create(ctx context.Context, owner *domain.Owner) error {
 	query := `
-		INSERT INTO owners (id, name, email, phone, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO owners (id, name, email, password_hash, phone, created_at, updated_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id, created_at, updated_at
 	`
 	if owner.ID == uuid.Nil {
 		owner.ID = uuid.New()
 	}
 
-	err := r.pool.QueryRow(ctx, query, owner.ID, owner.Name, owner.Email, owner.Phone).
+	err := r.pool.QueryRow(ctx, query, owner.ID, owner.Name, owner.Email, owner.PasswordHash, owner.Phone).
 		Scan(&owner.ID, &owner.CreatedAt, &owner.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -45,18 +45,37 @@ func (r *OwnerRepository) Create(ctx context.Context, owner *domain.Owner) error
 
 func (r *OwnerRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Owner, error) {
 	query := `
-		SELECT id, name, email, phone, created_at, updated_at
+		SELECT id, name, email, COALESCE(password_hash, ''), phone, created_at, updated_at
 		FROM owners
 		WHERE id = $1
 	`
 	owner := &domain.Owner{}
 	err := r.pool.QueryRow(ctx, query, id).
-		Scan(&owner.ID, &owner.Name, &owner.Email, &owner.Phone, &owner.CreatedAt, &owner.UpdatedAt)
+		Scan(&owner.ID, &owner.Name, &owner.Email, &owner.PasswordHash, &owner.Phone, &owner.CreatedAt, &owner.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("error al obtener propietario: %w", err)
+	}
+
+	return owner, nil
+}
+
+func (r *OwnerRepository) GetByEmail(ctx context.Context, email string) (*domain.Owner, error) {
+	query := `
+		SELECT id, name, email, COALESCE(password_hash, ''), phone, created_at, updated_at
+		FROM owners
+		WHERE LOWER(email) = LOWER($1)
+	`
+	owner := &domain.Owner{}
+	err := r.pool.QueryRow(ctx, query, email).
+		Scan(&owner.ID, &owner.Name, &owner.Email, &owner.PasswordHash, &owner.Phone, &owner.CreatedAt, &owner.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("error al obtener propietario por email: %w", err)
 	}
 
 	return owner, nil

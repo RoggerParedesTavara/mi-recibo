@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/RoggerParedesTavara/mi-recibo/internal/domain"
 	"github.com/RoggerParedesTavara/mi-recibo/internal/repository/postgres"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type PropertyService struct {
@@ -21,17 +23,31 @@ func NewPropertyService(ownerRepo *postgres.OwnerRepository, propertyRepo *postg
 	}
 }
 
-func (s *PropertyService) CreateOwner(ctx context.Context, name, email, phone string) (*domain.Owner, error) {
+func (s *PropertyService) CreateOwner(ctx context.Context, name, email, phone string, passwords ...string) (*domain.Owner, error) {
 	name = strings.TrimSpace(name)
-	email = strings.TrimSpace(email)
+	email = strings.ToLower(strings.TrimSpace(email))
 	if name == "" || email == "" {
 		return nil, domain.ErrValidation
 	}
 
+	var passwordHash string
+	if len(passwords) > 0 && passwords[0] != "" {
+		pwd := passwords[0]
+		if len(pwd) < 8 {
+			return nil, domain.ErrInvalidPassword
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, fmt.Errorf("error al hashear contraseña: %w", err)
+		}
+		passwordHash = string(hash)
+	}
+
 	owner := &domain.Owner{
-		Name:  name,
-		Email: email,
-		Phone: phone,
+		Name:         name,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Phone:        phone,
 	}
 	if err := s.ownerRepo.Create(ctx, owner); err != nil {
 		return nil, err

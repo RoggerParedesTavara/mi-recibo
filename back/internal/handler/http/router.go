@@ -3,11 +3,14 @@ package http
 import (
 	"net/http"
 
+	"github.com/RoggerParedesTavara/mi-recibo/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
 type RouterParams struct {
+	AuthHandler     *AuthHandler
+	AuthService     *service.AuthService
 	OwnerHandler    *OwnerHandler
 	PropertyHandler *PropertyHandler
 	TenantHandler   *TenantHandler
@@ -35,6 +38,19 @@ func NewRouter(p RouterParams) http.Handler {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
+		// Authentication & Registration
+		if p.AuthHandler != nil {
+			r.Route("/auth", func(r chi.Router) {
+				r.Post("/register", p.AuthHandler.Register)
+				r.Post("/login", p.AuthHandler.Login)
+				r.Post("/refresh", p.AuthHandler.Refresh)
+				r.Post("/logout", p.AuthHandler.Logout)
+				if p.AuthService != nil {
+					r.With(AuthMiddleware(p.AuthService)).Get("/me", p.AuthHandler.Me)
+				}
+			})
+		}
+
 		// Owners
 		r.Route("/owners", func(r chi.Router) {
 			r.Post("/", p.OwnerHandler.CreateOwner)

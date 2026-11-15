@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -18,6 +19,9 @@ type Config struct {
 	DBName                         string
 	DBSSLMode                      string
 	ConsumptionAlertSpikeThreshold float64
+	JWTSecret                      string
+	JWTAccessTokenSeconds          int
+	JWTRefreshTokenDays            int
 }
 
 func LoadConfig() (*Config, error) {
@@ -29,9 +33,35 @@ func LoadConfig() (*Config, error) {
 		spikeThreshold = 20.0
 	}
 
+	environment := getEnv("ENVIRONMENT", "development")
+	defaultAccessTokenSeconds := "900"
+	if !strings.EqualFold(environment, "production") {
+		defaultAccessTokenSeconds = "5"
+	}
+	accessTokenSeconds, err := strconv.Atoi(getEnv("JWT_ACCESS_TOKEN_SECONDS", defaultAccessTokenSeconds))
+	if err != nil || accessTokenSeconds <= 0 {
+		accessTokenSeconds, _ = strconv.Atoi(defaultAccessTokenSeconds)
+	}
+	if strings.EqualFold(environment, "production") && accessTokenSeconds < 60 {
+		return nil, fmt.Errorf("JWT_ACCESS_TOKEN_SECONDS debe ser al menos 60 en producción")
+	}
+	refreshTokenDays, err := strconv.Atoi(getEnv("JWT_REFRESH_TOKEN_DAYS", "30"))
+	if err != nil || refreshTokenDays <= 0 {
+		refreshTokenDays = 30
+	}
+
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if strings.EqualFold(environment, "production") {
+		if len(jwtSecret) < 32 {
+			return nil, fmt.Errorf("JWT_SECRET debe configurarse con al menos 32 caracteres en producción")
+		}
+	} else if jwtSecret == "" {
+		jwtSecret = "mi-recibo-development-secret-change-before-production"
+	}
+
 	cfg := &Config{
 		ServerPort:                     getEnv("SERVER_PORT", "8080"),
-		Environment:                    getEnv("ENVIRONMENT", "development"),
+		Environment:                    environment,
 		DBHost:                         getEnv("DB_HOST", "localhost"),
 		DBPort:                         getEnv("DB_PORT", "5432"),
 		DBUser:                         getEnv("DB_USER", "postgres"),
@@ -39,6 +69,9 @@ func LoadConfig() (*Config, error) {
 		DBName:                         getEnv("DB_NAME", "mi_recibo"),
 		DBSSLMode:                      getEnv("DB_SSLMODE", "disable"),
 		ConsumptionAlertSpikeThreshold: spikeThreshold,
+		JWTSecret:                      jwtSecret,
+		JWTAccessTokenSeconds:          accessTokenSeconds,
+		JWTRefreshTokenDays:            refreshTokenDays,
 	}
 
 	return cfg, nil
