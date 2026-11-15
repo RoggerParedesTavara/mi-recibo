@@ -61,44 +61,36 @@ Desde el directorio `front-mobile/`:
 npm ci
 ```
 
-### 2. Configurar variables de entorno
+### 2. Configurar los entornos
 
-Copia el archivo base `.env.example` a `.env`:
+Hay dos perfiles, y sus archivos reales no se suben a Git:
 
-```bash
-cp .env.example .env
+- `.env.local`: emulador Android en esta PC; usa el túnel SSH local hacia la API de la VM.
+- `.env.development`: dirección del servidor remoto de desarrollo.
+
+Creá los archivos desde sus ejemplos:
+
+```powershell
+Copy-Item .env.local.example .env.local
+Copy-Item .env.development.example .env.development
 ```
 
-Configura `API_BASE_URL` según tu entorno:
+El perfil local usa `http://10.0.2.2:18081/api/v1`; mantené abierto el túnel SSH a la VM en el puerto `18081`. En el simulador iOS, cambiá en `.env.local` `10.0.2.2` por `localhost`.
 
-- **Simulador iOS**:
-  ```env
-  API_BASE_URL=http://localhost:8080/api/v1
-  ```
-- **Emulador Android**:
-  ```env
-  API_BASE_URL=http://10.0.2.2:8080/api/v1
-  ```
-  *(La IP `10.0.2.2` permite que el emulador acceda al `localhost` de tu máquina anfitriona).*
-- **Dispositivo físico (iOS / Android)**:
-  ```env
-  API_BASE_URL=http://<IP_LOCAL_DE_TU_PC>:8080/api/v1
-  ```
+El perfil development apunta a `https://mi-recibo-dev.tailf34c81.ts.net/api/v1`. Ese dominio debe estar encaminado hacia Caddy/API para que la app pueda conectarse; si Funnel todavía no sirve la API, usá `local`.
 
-### 3. Compilar y correr en el dispositivo/emulador
+### 3. Elegir entorno al ejecutar
 
-Los comandos de ejecución compilan e instalan la app. En iOS, `npm run ios` ejecuta `pod install` automáticamente antes del build. En Android, React Native enlaza las dependencias nativas durante el build de Gradle.
+Pasá `--env local` o `--env development` después de `--`:
 
-- **Para iOS**:
-  ```bash
-  npm run ios
-  ```
-- **Para Android**:
-  ```bash
-  npm run android
-  ```
+```powershell
+npm run android -- --env local
+npm run android -- --env development
+npm run ios -- --env local
+npm run start -- --env development
+```
 
-Metro queda activo para Fast Refresh. Para iniciarlo manualmente con la caché limpia, ejecuta `npm start` en otra terminal; `Ctrl+C` lo detiene.
+También se acepta `--env=development`. Si no indicás la opción, se usa `local`. Al cambiar de perfil, volvé a ejecutar `npm run android` o `npm run ios` con el perfil elegido para recompilar la app con esa URL; iniciar Metro por sí solo no cambia la URL que quedó compilada en la app. En iOS, `npm run ios` instala los pods antes del build.
 
 ---
 
@@ -132,7 +124,7 @@ npm run lint
 
 ## 🔧 Solución de Problemas Frecuentes
 
-- **Error de conexión con el backend en Android**: Verifica que tu `.env` tenga `http://10.0.2.2:8080/api/v1` y no `localhost`.
+- **Error de conexión con el backend**: Confirmá el perfil seleccionado, que exista `.env.local` o `.env.development`, y que la API correspondiente esté accesible.
 - **Metro Bundler desfasado o errores de caché**:
   ```bash
   npm start -- --reset-cache
