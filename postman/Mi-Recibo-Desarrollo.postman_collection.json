@@ -11,6 +11,8 @@
     { "key": "email", "value": "coral@test.com" },
     { "key": "tenantId", "value": "d30e0a00-48fe-4db6-95f2-76dde17bb7fd" },
     { "key": "service", "value": "LUZ" },
+    { "key": "year", "value": "2026" },
+    { "key": "month", "value": "10" },
     { "key": "password", "value": "", "type": "secret" },
     { "key": "accessToken", "value": "", "type": "secret" },
     { "key": "refreshToken", "value": "", "type": "secret" }
@@ -107,6 +109,31 @@
               "if (pm.response.code === 200) {",
               "  const reading = pm.response.json();",
               "  pm.test('Incluye período y lectura actual', function () { pm.expect(reading.tenant_id).to.eql(pm.environment.get('tenantId')); pm.expect(reading.service_type).to.eql(pm.environment.get('service')); pm.expect(reading.current_reading).to.not.be.undefined; pm.expect(reading.billing_month).to.be.within(1, 12); });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Lectura de un período",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": "{{apiBaseUrl}}/tenants/{{tenantId}}/readings?service={{service}}&year={{year}}&month={{month}}",
+        "description": "Trae la lectura anterior y actual para un período específico. Por defecto consulta octubre de 2026 para Inquilino 1 y LUZ."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Lectura del período encontrada', function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) {",
+              "  const reading = pm.response.json();",
+              "  pm.test('El período coincide con la consulta', function () { pm.expect(String(reading.billing_year)).to.eql(pm.environment.get('year')); pm.expect(String(reading.billing_month)).to.eql(pm.environment.get('month')); });",
+              "  pm.test('Incluye lectura anterior y actual', function () { pm.expect(reading.previous_reading).to.not.be.undefined; pm.expect(reading.current_reading).to.not.be.undefined; });",
               "}"
             ]
           }

@@ -131,6 +131,44 @@ func (r *ConsumptionRepository) GetLatestReadingByTenantAndService(
 	return reading, nil
 }
 
+// GetReadingByTenantServicePeriod returns a complete meter reading for an
+// explicit billing period.
+func (r *ConsumptionRepository) GetReadingByTenantServicePeriod(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	serviceType domain.ServiceType,
+	year, month int,
+) (*domain.TenantReading, error) {
+	query := `
+		SELECT tc.tenant_id, t.unit_id, tc.master_bill_id, mb.service_type,
+		       mb.billing_year, mb.billing_month, tc.previous_reading,
+		       tc.current_reading, tc.consumed_units, tc.updated_at
+		FROM tenant_consumptions tc
+		JOIN master_bills mb ON mb.id = tc.master_bill_id
+		JOIN tenants t ON t.id = tc.tenant_id
+		WHERE tc.tenant_id = $1
+		  AND mb.service_type = $2
+		  AND mb.billing_year = $3
+		  AND mb.billing_month = $4
+		  AND tc.current_reading IS NOT NULL
+		ORDER BY tc.updated_at DESC
+		LIMIT 1
+	`
+	reading := &domain.TenantReading{}
+	err := r.pool.QueryRow(ctx, query, tenantID, serviceType, year, month).Scan(
+		&reading.TenantID, &reading.UnitID, &reading.MasterBillID, &reading.ServiceType,
+		&reading.BillingYear, &reading.BillingMonth, &reading.PreviousReading,
+		&reading.CurrentReading, &reading.ConsumedUnits, &reading.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("error al buscar lectura del período: %w", err)
+	}
+	return reading, nil
+}
+
 // GetPreviousMonthConsumption finds the consumed units of the previous month for the same service and tenant
 func (r *ConsumptionRepository) GetPreviousMonthConsumption(
 	ctx context.Context,

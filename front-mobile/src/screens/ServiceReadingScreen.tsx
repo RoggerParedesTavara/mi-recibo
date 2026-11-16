@@ -98,23 +98,38 @@ export function ServiceReadingScreen({ property, unit, tenant, service, onBack, 
       // reading. Local examples are only fallbacks and must never override it.
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!isUuid.test(tenant.id)) return;
-      apiClient.get<LatestTenantReadingDTO>(
-        apiRoutes.tenants.latestReading(tenant.id, service),
-      ).then(remoteReading => {
+      const previousPeriod = now.getMonth() === 0
+        ? { year: now.getFullYear() - 1, month: 12 }
+        : { year: now.getFullYear(), month: now.getMonth() };
+      const currentPeriodRequest = apiClient.get<LatestTenantReadingDTO>(
+        apiRoutes.tenants.readingByPeriod(
+          tenant.id,
+          service,
+          now.getFullYear(),
+          now.getMonth() + 1,
+        ),
+      ).catch(() => undefined);
+      const previousPeriodRequest = apiClient.get<LatestTenantReadingDTO>(
+        apiRoutes.tenants.readingByPeriod(
+          tenant.id,
+          service,
+          previousPeriod.year,
+          previousPeriod.month,
+        ),
+      ).catch(() => undefined);
+      Promise.all([currentPeriodRequest, previousPeriodRequest]).then(([remoteCurrent, remotePrevious]) => {
         if (!active || savedCurrentPeriodReading) return;
-        const remotePeriodKey = remoteReading.billing_year * 12 + remoteReading.billing_month;
-        const remoteCurrentReading = String(remoteReading.current_reading);
-        const isRemoteCurrentPeriod = remotePeriodKey === currentPeriodKey;
-        const nextPreviousReading = isRemoteCurrentPeriod
-          ? String(remoteReading.previous_reading ?? '0')
-          : remoteCurrentReading;
-        setAutomaticPreviousReading(nextPreviousReading);
-        setPreviousReading(nextPreviousReading);
-        setIsPreviousReadingReset(false);
-        setCurrentReading(isRemoteCurrentPeriod ? remoteCurrentReading : '');
+        const automaticPrevious = remotePrevious
+          ? String(remotePrevious.current_reading)
+          : previousValue;
+        const selectedPrevious = remoteCurrent
+          ? String(remoteCurrent.previous_reading ?? automaticPrevious)
+          : automaticPrevious;
+        setAutomaticPreviousReading(automaticPrevious);
+        setPreviousReading(selectedPrevious);
+        setIsPreviousReadingReset(selectedPrevious === '0' && Number(automaticPrevious) > 0);
+        setCurrentReading(remoteCurrent ? String(remoteCurrent.current_reading) : '');
         setIsExampleReading(false);
-      }).catch(() => {
-        // Offline mode and accounts without a reading keep their local fallback.
       });
     });
     return () => { active = false; };

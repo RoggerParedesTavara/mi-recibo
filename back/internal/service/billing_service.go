@@ -209,6 +209,23 @@ func (s *BillingService) GetLatestReadingByTenantAndService(
 	return s.consumptionRepo.GetLatestReadingByTenantAndService(ctx, tenantID, serviceType)
 }
 
+func (s *BillingService) GetReadingByTenantServicePeriod(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	serviceType domain.ServiceType,
+	year, month int,
+) (*domain.TenantReading, error) {
+	switch serviceType {
+	case domain.ServiceLuz, domain.ServiceAgua, domain.ServiceGas:
+	default:
+		return nil, fmt.Errorf("%w: tipo de servicio inválido (debe ser LUZ, AGUA o GAS)", domain.ErrValidation)
+	}
+	if year < 2000 || month < 1 || month > 12 {
+		return nil, fmt.Errorf("%w: año o mes de facturación inválido", domain.ErrValidation)
+	}
+	return s.consumptionRepo.GetReadingByTenantServicePeriod(ctx, tenantID, serviceType, year, month)
+}
+
 func (s *BillingService) RecordConsumptions(ctx context.Context, masterBillID uuid.UUID, readings []domain.ReadingInput) ([]domain.TenantConsumption, error) {
 	if len(readings) == 0 {
 		return nil, fmt.Errorf("%w: no se proporcionaron lecturas", domain.ErrValidation)

@@ -5,7 +5,7 @@ info:
     API REST para la gestión de inquilinos, inmuebles y liquidación automatizada 
     de recibos de servicios (luz, agua, gas) con lista dinámica de cargos extras,
     prorrateo equitativo, alertas de sobreconsumo y desglose transparente.
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: http://localhost:8080/api/v1
     description: Servidor Local de Desarrollo
@@ -400,6 +400,57 @@ paths:
       responses:
         '200':
           description: Última lectura guardada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestTenantReading'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: El inquilino no pertenece al propietario autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tenants/{id}/readings:
+    get:
+      summary: Obtener la lectura de medidor de un inquilino para un período
+      description: Devuelve lectura anterior, actual y consumo del servicio en el período solicitado.
+      tags: [Consumos Mensuales]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: service
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [LUZ, AGUA, GAS]
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 2000
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+      responses:
+        '200':
+          description: Lectura del período encontrada
           content:
             application/json:
               schema:

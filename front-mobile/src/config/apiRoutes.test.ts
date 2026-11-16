@@ -40,4 +40,10 @@ describe('apiRoutes - Catálogo de endpoints centralizado', () => {
       '/tenants/tenant-1/readings/latest?service=LUZ',
     );
   });
+
+  it('genera la URL de lectura de medidor para un período específico', () => {
+    expect(apiRoutes.tenants.readingByPeriod('tenant-1', 'LUZ', 2026, 10)).toContain(
+      '/tenants/tenant-1/readings?service=LUZ&year=2026&month=10',
+    );
+  });
 });

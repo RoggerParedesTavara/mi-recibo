@@ -85,6 +85,20 @@ export const apiRoutes = {
       url.searchParams.set('service', service);
       return url.toString();
     },
+    readingByPeriod: (
+      id: string,
+      service: string,
+      year: number,
+      month: number,
+    ): string => {
+      const url = new URL(
+        `${requireApiBaseUrl()}/tenants/${encodeURIComponent(id)}/readings`,
+      );
+      url.searchParams.set('service', service);
+      url.searchParams.set('year', year.toString());
+      url.searchParams.set('month', month.toString());
+      return url.toString();
+    },
   },
 
   masterBills: {

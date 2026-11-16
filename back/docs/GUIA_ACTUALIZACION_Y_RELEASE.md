@@ -117,6 +117,15 @@ Authorization: Bearer <access_token>
 - `401`: falta sesión válida.
 - `404`: ese inquilino no tiene lectura completa para ese servicio.
 
+Para consultar la lectura de un período específico:
+
+```http
+GET /api/v1/tenants/{tenant_id}/readings?service=LUZ&year=2026&month=10
+Authorization: Bearer <access_token>
+```
+
+La respuesta incluye `previous_reading` y `current_reading` del período solicitado. Esta ruta compatible mantiene `/api/v1`; OpenAPI se actualiza a la versión `1.1.0`.
+
 En desarrollo, la colección de Postman está en `postman/Mi-Recibo-Desarrollo.postman_collection.json`. Importá también el environment del mismo nombre, ejecutá login y luego la consulta de última lectura. La contraseña debe cargarse como variable secreta local, no compartirse ni exportarse.
 
 ## Sacar una nueva versión de Android

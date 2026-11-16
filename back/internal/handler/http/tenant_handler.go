@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/RoggerParedesTavara/mi-recibo/internal/domain"
 	"github.com/RoggerParedesTavara/mi-recibo/internal/service"
@@ -124,6 +125,27 @@ func (h *TenantHandler) GetLatestReading(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	reading, err := h.billingService.GetLatestReadingByTenantAndService(r.Context(), id, serviceType)
+	if err != nil {
+		RespondError(w, err)
+		return
+	}
+	RespondJSON(w, http.StatusOK, reading)
+}
+
+func (h *TenantHandler) GetReadingByPeriod(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	serviceType := domain.ServiceType(r.URL.Query().Get("service"))
+	year, yearErr := strconv.Atoi(r.URL.Query().Get("year"))
+	month, monthErr := strconv.Atoi(r.URL.Query().Get("month"))
+	if serviceType == "" || yearErr != nil || monthErr != nil {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	reading, err := h.billingService.GetReadingByTenantServicePeriod(r.Context(), id, serviceType, year, month)
 	if err != nil {
 		RespondError(w, err)
 		return

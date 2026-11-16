@@ -39,6 +39,9 @@ type LatestTenantReading struct {
 	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
+// TenantReading represents a tenant's meter reading for a billing period.
+type TenantReading = LatestTenantReading
+
 type ReadingInput struct {
 	TenantID        uuid.UUID        `json:"tenant_id"`
 	UnitID          *uuid.UUID       `json:"unit_id,omitempty"`
