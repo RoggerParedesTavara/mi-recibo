@@ -111,3 +111,22 @@ func (h *TenantHandler) ListTenantBills(w http.ResponseWriter, r *http.Request) 
 
 	RespondJSON(w, http.StatusOK, bills)
 }
+
+func (h *TenantHandler) GetLatestReading(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	serviceType := domain.ServiceType(r.URL.Query().Get("service"))
+	if serviceType == "" {
+		RespondError(w, domain.ErrValidation)
+		return
+	}
+	reading, err := h.billingService.GetLatestReadingByTenantAndService(r.Context(), id, serviceType)
+	if err != nil {
+		RespondError(w, err)
+		return
+	}
+	RespondJSON(w, http.StatusOK, reading)
+}

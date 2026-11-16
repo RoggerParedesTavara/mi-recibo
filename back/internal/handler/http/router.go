@@ -86,6 +86,7 @@ func NewRouter(p RouterParams) http.Handler {
 		protected.Route("/tenants", func(r chi.Router) {
 			r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenant, "id")).Put("/{id}", p.TenantHandler.UpdateTenant)
 			r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenant, "id")).Get("/{id}/bills", p.TenantHandler.ListTenantBills)
+			r.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceTenant, "id")).Get("/{id}/readings/latest", p.TenantHandler.GetLatestReading)
 		})
 		protected.With(ResourceOwnershipMiddleware(p.AuthorizationService, service.ResourceUnit, "id")).Put("/units/{id}", p.UnitHandler.Update)
 

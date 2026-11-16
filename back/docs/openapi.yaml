@@ -9,6 +9,8 @@ info:
 servers:
   - url: http://localhost:8080/api/v1
     description: Servidor Local de Desarrollo
+  - url: https://mi-recibo-dev.tailf34c81.ts.net/api/v1
+    description: Servidor remoto de desarrollo
 security:
   - BearerAuth: []
 
@@ -376,6 +378,44 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/TenantBillDetail'
+
+  /tenants/{id}/readings/latest:
+    get:
+      summary: Obtener la última lectura de medidor de un inquilino
+      description: Devuelve la lectura actual más reciente para el servicio indicado, ordenada por período de facturación. El cliente puede usar current_reading como previous_reading del próximo período.
+      tags: [Consumos Mensuales]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: service
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [LUZ, AGUA, GAS]
+      responses:
+        '200':
+          description: Última lectura guardada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestTenantReading'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: El inquilino no pertenece al propietario autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /properties/{property_id}/master-bills:
     post:
@@ -938,6 +978,39 @@ components:
         alert_message:
           type: string
           example: "El consumo aumentó un 33.33% respecto al mes anterior."
+
+    LatestTenantReading:
+      type: object
+      required: [tenant_id, master_bill_id, service_type, billing_year, billing_month, current_reading, consumed_units, updated_at]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        unit_id:
+          type: string
+          format: uuid
+        master_bill_id:
+          type: string
+          format: uuid
+        service_type:
+          type: string
+          enum: [LUZ, AGUA, GAS]
+        billing_year:
+          type: integer
+        billing_month:
+          type: integer
+        previous_reading:
+          type: string
+          example: "1200.5000"
+        current_reading:
+          type: string
+          example: "1250.7500"
+        consumed_units:
+          type: string
+          example: "50.2500"
+        updated_at:
+          type: string
+          format: date-time
 
     TenantBillChargeBreakdown:
       type: object

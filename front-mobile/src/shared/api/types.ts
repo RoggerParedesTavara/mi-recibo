@@ -61,6 +61,21 @@ export interface MasterBillDTO {
 export interface ReadingInputDTO {
   tenant_id: string;
   consumed_units: string | number;
+  previous_reading?: string | number;
+  current_reading?: string | number;
+}
+
+export interface LatestTenantReadingDTO {
+  tenant_id: string;
+  unit_id?: string;
+  master_bill_id: string;
+  service_type: ServiceType;
+  billing_year: number;
+  billing_month: number;
+  previous_reading?: string | number;
+  current_reading: string | number;
+  consumed_units: string | number;
+  updated_at: string;
 }
 
 export interface RecordConsumptionsRequestDTO {

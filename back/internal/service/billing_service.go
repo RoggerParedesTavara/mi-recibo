@@ -196,6 +196,19 @@ func (s *BillingService) ListMasterBills(ctx context.Context, propertyID uuid.UU
 	return s.masterBillRepo.ListByProperty(ctx, propertyID, year, month, service)
 }
 
+func (s *BillingService) GetLatestReadingByTenantAndService(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	serviceType domain.ServiceType,
+) (*domain.LatestTenantReading, error) {
+	switch serviceType {
+	case domain.ServiceLuz, domain.ServiceAgua, domain.ServiceGas:
+	default:
+		return nil, fmt.Errorf("%w: tipo de servicio inválido (debe ser LUZ, AGUA o GAS)", domain.ErrValidation)
+	}
+	return s.consumptionRepo.GetLatestReadingByTenantAndService(ctx, tenantID, serviceType)
+}
+
 func (s *BillingService) RecordConsumptions(ctx context.Context, masterBillID uuid.UUID, readings []domain.ReadingInput) ([]domain.TenantConsumption, error) {
 	if len(readings) == 0 {
 		return nil, fmt.Errorf("%w: no se proporcionaron lecturas", domain.ErrValidation)

@@ -78,6 +78,13 @@ export const apiRoutes = {
       `${requireApiBaseUrl()}/tenants/${encodeURIComponent(id)}`,
     listBills: (id: string): string =>
       `${requireApiBaseUrl()}/tenants/${encodeURIComponent(id)}/bills`,
+    latestReading: (id: string, service: string): string => {
+      const url = new URL(
+        `${requireApiBaseUrl()}/tenants/${encodeURIComponent(id)}/readings/latest`,
+      );
+      url.searchParams.set('service', service);
+      return url.toString();
+    },
   },
 
   masterBills: {

@@ -7,6 +7,9 @@ import type { ServiceBillingConfig } from '../modules/billing/models/serviceBill
 import { localMeasurementRepository } from '../modules/consumptions/api/localMeasurementRepository';
 import { syncPendingMeasurements } from '../modules/consumptions/api/syncQueue';
 import type { UtilityService } from '../modules/consumptions/models/measurement';
+import { apiRoutes } from '../config/apiRoutes';
+import { apiClient } from '../shared/api/apiClient';
+import type { LatestTenantReadingDTO } from '../shared/api/types';
 import type { LocalProperty, LocalUnit } from '../modules/properties/models/localProperty';
 import type { LocalTenant } from '../modules/tenants/models/localTenant';
 import { AppText, Card, Header, Page, PrimaryButton, SectionTitle, TextField } from '../shared/ui/components';
@@ -58,6 +61,7 @@ export function ServiceReadingScreen({ property, unit, tenant, service, onBack, 
 
   useEffect(() => {
     let active = true;
+    const currentPeriodKey = now.getFullYear() * 12 + now.getMonth() + 1;
     Promise.all([
       localServiceBillingConfigRepository.get(service),
       localMeasurementRepository.list({
@@ -72,7 +76,9 @@ export function ServiceReadingScreen({ property, unit, tenant, service, onBack, 
       const currentPeriodReading = readings.find(reading =>
         reading.billingYear === now.getFullYear() && reading.billingMonth === now.getMonth() + 1,
       );
-      const currentPeriodKey = now.getFullYear() * 12 + now.getMonth() + 1;
+      const savedCurrentPeriodReading = currentPeriodReading?.source === 'manual'
+        ? currentPeriodReading
+        : undefined;
       const previousPeriodReading = readings
         .filter(reading => (
           reading.billingYear * 12 + reading.billingMonth < currentPeriodKey
@@ -80,17 +86,36 @@ export function ServiceReadingScreen({ property, unit, tenant, service, onBack, 
         ))
         .sort((a, b) => b.billingYear * 12 + b.billingMonth - (a.billingYear * 12 + a.billingMonth))[0];
       const previousValue = previousPeriodReading?.currentReading ?? currentPeriodReading?.previousReading ?? '0';
-      const selectedPreviousReading = currentPeriodReading?.previousReading ?? previousValue;
+      const selectedPreviousReading = savedCurrentPeriodReading?.previousReading ?? previousValue;
       setAutomaticPreviousReading(previousValue);
       setPreviousReading(selectedPreviousReading);
       setIsPreviousReadingReset(selectedPreviousReading === '0' && previousValue !== '0');
-      const existingCurrentReading = currentPeriodReading?.currentReading ?? (
-        currentPeriodReading
-          ? String(Number(selectedPreviousReading) + Number(currentPeriodReading.consumedUnits))
-          : ''
-      );
+      const existingCurrentReading = savedCurrentPeriodReading?.currentReading ?? '';
       setCurrentReading(existingCurrentReading);
-      setIsExampleReading(currentPeriodReading?.source === 'example');
+      setIsExampleReading(false);
+
+      // The server is the source of truth for the most recently saved meter
+      // reading. Local examples are only fallbacks and must never override it.
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!isUuid.test(tenant.id)) return;
+      apiClient.get<LatestTenantReadingDTO>(
+        apiRoutes.tenants.latestReading(tenant.id, service),
+      ).then(remoteReading => {
+        if (!active || savedCurrentPeriodReading) return;
+        const remotePeriodKey = remoteReading.billing_year * 12 + remoteReading.billing_month;
+        const remoteCurrentReading = String(remoteReading.current_reading);
+        const isRemoteCurrentPeriod = remotePeriodKey === currentPeriodKey;
+        const nextPreviousReading = isRemoteCurrentPeriod
+          ? String(remoteReading.previous_reading ?? '0')
+          : remoteCurrentReading;
+        setAutomaticPreviousReading(nextPreviousReading);
+        setPreviousReading(nextPreviousReading);
+        setIsPreviousReadingReset(false);
+        setCurrentReading(isRemoteCurrentPeriod ? remoteCurrentReading : '');
+        setIsExampleReading(false);
+      }).catch(() => {
+        // Offline mode and accounts without a reading keep their local fallback.
+      });
     });
     return () => { active = false; };
   }, [property.id, unit.id, tenant.id, service, now]);

@@ -1,0 +1,117 @@
+{
+  "info": {
+    "_postman_id": "a9031c9b-ea1b-4f91-aae3-19e17ed20c8a",
+    "name": "Mi Recibo API - Desarrollo",
+    "description": "Health check, login y perfil autenticado para el entorno de desarrollo. Configurá las variables del environment antes de enviar requests. No guardes contraseñas en la colección.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "apiOrigin", "value": "https://mi-recibo-dev.tailf34c81.ts.net" },
+    { "key": "apiBaseUrl", "value": "https://mi-recibo-dev.tailf34c81.ts.net/api/v1" },
+    { "key": "email", "value": "coral@test.com" },
+    { "key": "tenantId", "value": "d30e0a00-48fe-4db6-95f2-76dde17bb7fd" },
+    { "key": "service", "value": "LUZ" },
+    { "key": "password", "value": "", "type": "secret" },
+    { "key": "accessToken", "value": "", "type": "secret" },
+    { "key": "refreshToken", "value": "", "type": "secret" }
+  ],
+  "item": [
+    {
+      "name": "01 - Health check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{apiOrigin}}/health",
+        "description": "Confirma que el backend de desarrollo es accesible."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200: backend disponible', function () { pm.response.to.have.status(200); });",
+              "pm.test('La API informa status ok', function () { pm.expect(pm.response.json().status).to.eql('ok'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Login de prueba",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": "{{apiBaseUrl}}/auth/login",
+        "description": "Ingresá la contraseña en la variable secreta password del environment. Si el login funciona, guarda access_token y refresh_token automáticamente."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  const data = pm.response.json();",
+              "  pm.environment.set('accessToken', data.access_token || data.token || '');",
+              "  pm.environment.set('refreshToken', data.refresh_token || '');",
+              "  pm.test('Login aceptado y tokens recibidos', function () { pm.expect(data.access_token || data.token).to.be.a('string').and.not.empty; pm.expect(data.refresh_token).to.be.a('string').and.not.empty; });",
+              "} else {",
+              "  pm.test('Login aceptado (revisá el status y el error abajo)', function () { pm.expect(pm.response.code, pm.response.text()).to.eql(200); });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Perfil autenticado",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": "{{apiBaseUrl}}/auth/me",
+        "description": "Usá este request después de un login exitoso para confirmar que el token sirve."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Token válido: HTTP 200', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Última lectura de medidor",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": "{{apiBaseUrl}}/tenants/{{tenantId}}/readings/latest?service={{service}}",
+        "description": "Devuelve la última lectura completa del inquilino y servicio. El tenantId inicial corresponde al Inquilino 1 de Casa San Felipe en desarrollo."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Última lectura encontrada', function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) {",
+              "  const reading = pm.response.json();",
+              "  pm.test('Incluye período y lectura actual', function () { pm.expect(reading.tenant_id).to.eql(pm.environment.get('tenantId')); pm.expect(reading.service_type).to.eql(pm.environment.get('service')); pm.expect(reading.current_reading).to.not.be.undefined; pm.expect(reading.billing_month).to.be.within(1, 12); });",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

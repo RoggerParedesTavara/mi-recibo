@@ -34,4 +34,10 @@ describe('apiRoutes - Catálogo de endpoints centralizado', () => {
     expect(apiRoutes.tenantBills.getById('tb-1')).toContain('/tenant-bills/tb-1');
     expect(apiRoutes.tenantBills.updatePayment('tb-1')).toContain('/tenant-bills/tb-1/payment');
   });
+
+  it('genera la URL de última lectura del medidor con el servicio', () => {
+    expect(apiRoutes.tenants.latestReading('tenant-1', 'LUZ')).toContain(
+      '/tenants/tenant-1/readings/latest?service=LUZ',
+    );
+  });
 });

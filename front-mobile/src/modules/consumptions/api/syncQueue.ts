@@ -101,7 +101,9 @@ export async function syncPendingMeasurements(): Promise<SyncResult> {
         readings: [
           {
             tenant_id: measurement.tenantId,
-            consumed_units: Number(measurement.consumedUnits),
+            consumed_units: measurement.consumedUnits,
+            previous_reading: measurement.previousReading,
+            current_reading: measurement.currentReading,
           },
         ],
       });
